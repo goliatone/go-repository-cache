@@ -1,0 +1,47 @@
+{
+  "scenarios": [
+    {
+      "name": "basic_types",
+      "description": "Test serialization of basic Go types",
+      "cases": [
+        {
+          "method": "Get",
+          "args": [1, "hello", true, 3.14],
+          "expectedKey": "Get:1:hello:true:3.14"
+        },
+        {
+          "method": "GetByID",
+          "args": [42],
+          "expectedKey": "GetByID:42"
+        },
+        {
+          "method": "List",
+          "args": [],
+          "expectedKey": "List"
+        }
+      ]
+    },
+    {
+      "name": "nil_values",
+      "description": "Test serialization of nil values and pointers",
+      "cases": [
+        {
+          "method": "GetByPtr",
+          "args": [null],
+          "expectedKey": "GetByPtr:nil"
+        }
+      ]
+    },
+    {
+      "name": "mixed_args",
+      "description": "Test serialization of mixed argument types",
+      "cases": [
+        {
+          "method": "ComplexQuery",
+          "args": ["user", 123, true, 3.14159],
+          "expectedKey": "ComplexQuery:user:123:true:3.14159"
+        }
+      ]
+    }
+  ]
+}
