@@ -253,7 +253,7 @@ func (s *sturdycService) GetOrFetch(ctx context.Context, key string, fetchFn any
 
 // callFetchFunctionWithReflection uses reflection to call any function that matches
 // the FetchFn[T] signature: func(context.Context) (T, error)
-// Note: fetchFn is guaranteed to be valid as it's pre-validated by validateFetchFn
+// Note: fetchFn is guaranteed to be valid as it's pre validated by validateFetchFn
 func callFetchFunctionWithReflection(ctx context.Context, fetchFn any) (any, error) {
 	// First try direct type assertion for the common case
 	if fn, ok := fetchFn.(func(context.Context) (any, error)); ok {
