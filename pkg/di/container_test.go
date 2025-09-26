@@ -5,16 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goliatone/go-repository-cache/internal/cacheinfra"
+	"github.com/goliatone/go-repository-cache/cache"
 )
 
 func TestNewContainer(t *testing.T) {
-	config := cacheinfra.Config{
+	config := cache.Config{
 		Capacity:           1000,
 		NumShards:          256,
 		TTL:                5 * time.Minute,
 		EvictionPercentage: 10,
-		EarlyRefresh: &cacheinfra.EarlyRefreshConfig{
+		EarlyRefresh: &cache.EarlyRefreshConfig{
 			MinAsyncRefreshTime: 10 * time.Second,
 			MaxAsyncRefreshTime: 20 * time.Second,
 			SyncRefreshTime:     30 * time.Second,
@@ -65,7 +65,7 @@ func TestNewContainerWithDefaults(t *testing.T) {
 
 	// Verify that default configuration is used
 	config := container.Config()
-	defaultConfig := cacheinfra.DefaultConfig()
+	defaultConfig := cache.DefaultConfig()
 
 	if config.Capacity != defaultConfig.Capacity {
 		t.Errorf("Expected default capacity %d, got %d", defaultConfig.Capacity, config.Capacity)
@@ -77,7 +77,7 @@ func TestNewContainerWithDefaults(t *testing.T) {
 }
 
 func TestNewContainer_InvalidConfig(t *testing.T) {
-	invalidConfig := cacheinfra.Config{
+	invalidConfig := cache.Config{
 		Capacity:           0, // Invalid: must be > 0
 		NumShards:          256,
 		TTL:                5 * time.Minute,

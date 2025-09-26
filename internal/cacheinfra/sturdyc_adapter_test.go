@@ -5,9 +5,14 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/goliatone/go-repository-cache/cache"
 )
+
+type cacheService interface {
+	GetOrFetch(ctx context.Context, key string, fetchFn any) (any, error)
+	Delete(ctx context.Context, key string) error
+	DeleteByPrefix(ctx context.Context, prefix string) error
+	InvalidateKeys(ctx context.Context, keys []string) error
+}
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
@@ -278,8 +283,8 @@ func TestNewSturdycService(t *testing.T) {
 				if service == nil {
 					t.Error("expected service to be non-nil")
 				}
-				// Verify service implements cache.CacheService interface
-				var _ cache.CacheService = service
+				// Verify service implements cacheService interface
+				var _ cacheService = service
 			}
 		})
 	}
@@ -428,7 +433,7 @@ func TestSturdycService_GetOrFetch(t *testing.T) {
 	t.Run("generic fetch function compatibility", func(t *testing.T) {
 		expectedValue := "generic-value"
 
-		var fetchFn cache.FetchFn[any] = func(ctx context.Context) (any, error) {
+		fetchFn := func(ctx context.Context) (any, error) {
 			return expectedValue, nil
 		}
 
@@ -709,8 +714,8 @@ func TestSturdycService_InterfaceCompliance(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	// Verify that sturdycService implements cache.CacheService interface
-	var _ cache.CacheService = service
+	// Verify that sturdycService implements the cacheService interface
+	var _ cacheService = service
 
 	// Additional runtime verification
 	if service == nil {

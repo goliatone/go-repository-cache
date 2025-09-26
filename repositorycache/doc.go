@@ -86,7 +86,10 @@
 // This package is designed to work with the dependency injection container
 // provided in pkg/di:
 //
-//	container := di.NewContainer(cacheConfig)
+//	container, err := di.NewContainer(cacheConfig)
+//	if err != nil {
+//		return err
+//	}
 //	cachedRepo := container.NewCachedRepository(baseRepo)
 //
 // # Compatibility

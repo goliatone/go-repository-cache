@@ -3,7 +3,6 @@ package di
 import (
 	repository "github.com/goliatone/go-repository-bun"
 	"github.com/goliatone/go-repository-cache/cache"
-	"github.com/goliatone/go-repository-cache/internal/cacheinfra"
 	"github.com/goliatone/go-repository-cache/repositorycache"
 )
 
@@ -13,15 +12,15 @@ import (
 type Container struct {
 	cacheService  cache.CacheService
 	keySerializer cache.KeySerializer
-	config        cacheinfra.Config
+	config        cache.Config
 }
 
 // NewContainer creates a new DI container with the provided cache configuration.
 // It initializes the cache service using the sturdyc adapter and sets up
 // the default key serializer for consistent key generation.
-func NewContainer(config cacheinfra.Config) (*Container, error) {
+func NewContainer(config cache.Config) (*Container, error) {
 	// Initialize the cache service using the sturdyc adapter
-	cacheService, err := cacheinfra.NewSturdycService(config)
+	cacheService, err := cache.NewCacheService(config)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +39,7 @@ func NewContainer(config cacheinfra.Config) (*Container, error) {
 // This is a convenience constructor for typical use cases where custom configuration
 // is not required.
 func NewContainerWithDefaults() (*Container, error) {
-	return NewContainer(cacheinfra.DefaultConfig())
+	return NewContainer(cache.DefaultConfig())
 }
 
 // CacheService returns the singleton cache service instance.
@@ -57,7 +56,7 @@ func (c *Container) KeySerializer() cache.KeySerializer {
 
 // Config returns a copy of the cache configuration used by this container.
 // This is useful for debugging and monitoring purposes.
-func (c *Container) Config() cacheinfra.Config {
+func (c *Container) Config() cache.Config {
 	return c.config
 }
 

@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/viccon/sturdyc"
-
-	"github.com/goliatone/go-repository-cache/cache"
 )
 
 // Config holds the configuration for the sturdyc cache adapter.
@@ -160,8 +158,7 @@ func (e *ConfigError) Error() string {
 	return "config error in field " + e.Field + ": " + e.Message
 }
 
-// sturdycService implements cache.CacheService using sturdyc as the backend.
-// This adapter translates our generic cache interface to sturdyc's typed API.
+// sturdycService wraps a sturdyc client providing caching behaviour.
 type sturdycService struct {
 	client *sturdyc.Client[any]
 }
@@ -175,7 +172,7 @@ type sturdycService struct {
 //
 // Version compatibility note: This implementation assumes sturdyc v1.x API.
 // Monitor sturdyc version upgrades for potential option mapping changes.
-func NewSturdycService(cfg Config) (cache.CacheService, error) {
+func NewSturdycService(cfg Config) (*sturdycService, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -189,9 +186,7 @@ func NewSturdycService(cfg Config) (cache.CacheService, error) {
 		cfg.ToSturdycOptions()...,
 	)
 
-	return &sturdycService{
-		client: client,
-	}, nil
+	return &sturdycService{client: client}, nil
 }
 
 // GetOrFetch implements cache.CacheService.GetOrFetch.

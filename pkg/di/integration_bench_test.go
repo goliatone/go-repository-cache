@@ -8,12 +8,11 @@ import (
 	"time"
 
 	"github.com/goliatone/go-repository-cache/cache"
-	"github.com/goliatone/go-repository-cache/internal/cacheinfra"
 )
 
 // TestConcurrentAccess tests concurrent access to cached repository operations
 func TestConcurrentAccess(t *testing.T) {
-	config := cacheinfra.Config{
+	config := cache.Config{
 		Capacity:             1000,
 		NumShards:            16,
 		TTL:                  5 * time.Second,
@@ -202,7 +201,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 
 // TestTTLExpiryIntegration tests cache entries expiring based on TTL settings
 func TestTTLExpiryIntegration(t *testing.T) {
-	shortTTLConfig := cacheinfra.Config{
+	shortTTLConfig := cache.Config{
 		Capacity:             50,
 		NumShards:            4,
 		TTL:                  200 * time.Millisecond,

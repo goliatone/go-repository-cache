@@ -8,7 +8,7 @@ import (
 	"time"
 
 	repository "github.com/goliatone/go-repository-bun"
-	"github.com/goliatone/go-repository-cache/internal/cacheinfra"
+	"github.com/goliatone/go-repository-cache/cache"
 	"github.com/uptrace/bun"
 )
 
@@ -235,7 +235,7 @@ var _ repository.Repository[User] = (*mockUserRepository)(nil)
 // using the DI container to wire up cached repository operations
 func TestEndToEndCachedRepositoryFlow(t *testing.T) {
 	// Create DI container with minimal TTL for faster testing
-	config := cacheinfra.Config{
+	config := cache.Config{
 		Capacity:             100,
 		NumShards:            4,
 		TTL:                  1 * time.Second,
@@ -359,7 +359,7 @@ func TestEndToEndCachedRepositoryFlow(t *testing.T) {
 // TestCacheEvictionFlow tests that cache entries are properly evicted after TTL
 func TestCacheEvictionFlow(t *testing.T) {
 	// Create DI container with very short TTL for faster testing
-	config := cacheinfra.Config{
+	config := cache.Config{
 		Capacity:             10,
 		NumShards:            2,
 		TTL:                  100 * time.Millisecond,

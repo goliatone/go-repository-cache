@@ -37,7 +37,11 @@ func (c Config) Validate() error {
 
 // NewCacheService constructs the default cache service implementation using the provided configuration.
 func NewCacheService(cfg Config) (CacheService, error) {
-	return cacheinfra.NewSturdycService(cfg.toInternal())
+	service, err := cacheinfra.NewSturdycService(cfg.toInternal())
+	if err != nil {
+		return nil, err
+	}
+	return service, nil
 }
 
 func (c Config) toInternal() cacheinfra.Config {
