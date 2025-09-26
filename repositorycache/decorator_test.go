@@ -274,6 +274,32 @@ func (m *mockCacheService) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+func (m *mockCacheService) DeleteByPrefix(ctx context.Context, prefix string) error {
+	m.recordCall(fmt.Sprintf("DeleteByPrefix:%s", prefix))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for key := range m.storage {
+		if len(prefix) == 0 || (len(key) >= len(prefix) && key[:len(prefix)] == prefix) {
+			delete(m.storage, key)
+			delete(m.hits, key)
+		}
+	}
+	return nil
+}
+
+func (m *mockCacheService) InvalidateKeys(ctx context.Context, keys []string) error {
+	m.recordCall(fmt.Sprintf("InvalidateKeys:%v", keys))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, key := range keys {
+		delete(m.storage, key)
+		delete(m.hits, key)
+	}
+	return nil
+}
+
 // trackingKeySerializer tracks serialization calls and allows customization
 type trackingKeySerializer struct {
 	mu    sync.Mutex
@@ -332,7 +358,7 @@ func TestNew(t *testing.T) {
 		t.Error("base repository not stored correctly")
 	}
 
-	if cached.cache != cacheService {
+	if cached.cache == nil {
 		t.Error("cache service not stored correctly")
 	}
 

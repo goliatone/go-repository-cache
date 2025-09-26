@@ -3,6 +3,7 @@ package di
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ type User struct {
 
 // mockUserRepository provides a fake repository implementation for testing
 type mockUserRepository struct {
+	mu        sync.RWMutex
 	users     map[string]User
 	callCount map[string]int // Track method calls to verify caching behavior
 }
@@ -33,17 +35,23 @@ func newMockUserRepository() *mockUserRepository {
 }
 
 func (m *mockUserRepository) trackCall(method string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.callCount[method]++
 }
 
 func (m *mockUserRepository) getCallCount(method string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.callCount[method]
 }
 
 // GetByID implementation for mock repository
 func (m *mockUserRepository) GetByID(ctx context.Context, id string, criteria ...repository.SelectCriteria) (User, error) {
 	m.trackCall("GetByID")
+	m.mu.RLock()
 	user, exists := m.users[id]
+	m.mu.RUnlock()
 	if !exists {
 		return User{}, errors.New("user not found")
 	}
@@ -53,6 +61,8 @@ func (m *mockUserRepository) GetByID(ctx context.Context, id string, criteria ..
 // Get implementation for mock repository
 func (m *mockUserRepository) Get(ctx context.Context, criteria ...repository.SelectCriteria) (User, error) {
 	m.trackCall("Get")
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	// Simple implementation - return first user if any exists
 	for _, user := range m.users {
 		return user, nil
@@ -63,6 +73,8 @@ func (m *mockUserRepository) Get(ctx context.Context, criteria ...repository.Sel
 // List implementation for mock repository
 func (m *mockUserRepository) List(ctx context.Context, criteria ...repository.SelectCriteria) ([]User, int, error) {
 	m.trackCall("List")
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	users := make([]User, 0, len(m.users))
 	for _, user := range m.users {
 		users = append(users, user)
@@ -73,7 +85,10 @@ func (m *mockUserRepository) List(ctx context.Context, criteria ...repository.Se
 // Count implementation for mock repository
 func (m *mockUserRepository) Count(ctx context.Context, criteria ...repository.SelectCriteria) (int, error) {
 	m.trackCall("Count")
-	return len(m.users), nil
+	m.mu.RLock()
+	count := len(m.users)
+	m.mu.RUnlock()
+	return count, nil
 }
 
 // GetByIdentifier implementation for mock repository
@@ -88,21 +103,27 @@ func (m *mockUserRepository) Create(ctx context.Context, user User, criteria ...
 	if user.CreateTs == 0 {
 		user.CreateTs = time.Now().Unix()
 	}
+	m.mu.Lock()
 	m.users[user.ID] = user
+	m.mu.Unlock()
 	return user, nil
 }
 
 // Update implementation for mock repository
 func (m *mockUserRepository) Update(ctx context.Context, user User, criteria ...repository.UpdateCriteria) (User, error) {
 	m.trackCall("Update")
+	m.mu.Lock()
 	m.users[user.ID] = user
+	m.mu.Unlock()
 	return user, nil
 }
 
 // Delete implementation for mock repository
 func (m *mockUserRepository) Delete(ctx context.Context, user User) error {
 	m.trackCall("Delete")
+	m.mu.Lock()
 	delete(m.users, user.ID)
+	m.mu.Unlock()
 	return nil
 }
 
@@ -120,9 +141,12 @@ func (m *mockUserRepository) CreateManyTx(ctx context.Context, tx bun.IDB, recor
 	return m.CreateMany(ctx, records, criteria...)
 }
 func (m *mockUserRepository) GetOrCreate(ctx context.Context, record User) (User, error) {
+	m.mu.RLock()
 	if existing, exists := m.users[record.ID]; exists {
+		m.mu.RUnlock()
 		return existing, nil
 	}
+	m.mu.RUnlock()
 	return m.Create(ctx, record)
 }
 func (m *mockUserRepository) GetOrCreateTx(ctx context.Context, tx bun.IDB, record User) (User, error) {
@@ -158,7 +182,9 @@ func (m *mockUserRepository) DeleteTx(ctx context.Context, tx bun.IDB, record Us
 func (m *mockUserRepository) DeleteMany(ctx context.Context, criteria ...repository.DeleteCriteria) error {
 	m.trackCall("DeleteMany")
 	// Simple implementation - clear all users
+	m.mu.Lock()
 	m.users = make(map[string]User)
+	m.mu.Unlock()
 	return nil
 }
 func (m *mockUserRepository) DeleteManyTx(ctx context.Context, tx bun.IDB, criteria ...repository.DeleteCriteria) error {
@@ -210,13 +236,13 @@ var _ repository.Repository[User] = (*mockUserRepository)(nil)
 func TestEndToEndCachedRepositoryFlow(t *testing.T) {
 	// Create DI container with minimal TTL for faster testing
 	config := cacheinfra.Config{
-		Capacity:           100,
-		NumShards:          4,
-		TTL:                1 * time.Second,
-		EvictionPercentage: 10,
-		EarlyRefresh:       nil, // Disable for simpler test
+		Capacity:             100,
+		NumShards:            4,
+		TTL:                  1 * time.Second,
+		EvictionPercentage:   10,
+		EarlyRefresh:         nil, // Disable for simpler test
 		MissingRecordStorage: true,
-		EvictionInterval:   0,
+		EvictionInterval:     0,
 	}
 
 	container, err := NewContainer(config)
@@ -334,13 +360,13 @@ func TestEndToEndCachedRepositoryFlow(t *testing.T) {
 func TestCacheEvictionFlow(t *testing.T) {
 	// Create DI container with very short TTL for faster testing
 	config := cacheinfra.Config{
-		Capacity:           10,
-		NumShards:          2,
-		TTL:                100 * time.Millisecond,
-		EvictionPercentage: 10,
-		EarlyRefresh:       nil,
+		Capacity:             10,
+		NumShards:            2,
+		TTL:                  100 * time.Millisecond,
+		EvictionPercentage:   10,
+		EarlyRefresh:         nil,
 		MissingRecordStorage: true,
-		EvictionInterval:   50 * time.Millisecond,
+		EvictionInterval:     50 * time.Millisecond,
 	}
 
 	container, err := NewContainer(config)
