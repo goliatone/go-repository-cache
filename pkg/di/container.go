@@ -7,7 +7,7 @@ import (
 	"github.com/goliatone/go-repository-cache/repositorycache"
 )
 
-// Container provides dependency injection for cache-related components.
+// Container provides dependency injection for cache related components.
 // It manages singleton instances of cache services and key serializers,
 // and provides factory methods for creating cached repositories.
 type Container struct {
