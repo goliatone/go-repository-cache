@@ -1,6 +1,10 @@
 package cache
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+)
 
 // KeySerializer builds a cache key from a method name + arbitrary args.
 // It is responsible for producing stable keys across calls.
@@ -20,6 +24,10 @@ type CacheService interface {
 	InvalidateKeys(ctx context.Context, keys []string) error
 }
 
+// ErrInvalidResultType indicates that the underlying cache implementation returned a value
+// that cannot be asserted to the requested generic type.
+var ErrInvalidResultType = errors.New("cache: invalid result type")
+
 // GetOrFetch is a type-safe wrapper function that provides generic support for CacheService.
 func GetOrFetch[T any](ctx context.Context, service CacheService, key string, fetchFn FetchFn[T]) (T, error) {
 	result, err := service.GetOrFetch(ctx, key, fetchFn)
@@ -36,13 +44,11 @@ func GetOrFetch[T any](ctx context.Context, service CacheService, key string, fe
 	}
 
 	// Use comma-ok form to safely assert the type
-	// This provides graceful failure instead of panic if assertion fails
+	// Return an explicit error if the underlying value has the wrong type
 	if typedResult, ok := result.(T); ok {
 		return typedResult, nil
 	}
 
-	// If type assertion fails, return zero value - this should not happen
-	// in normal operation but provides a safety net
 	var zero T
-	return zero, nil
+	return zero, fmt.Errorf("%w (got %T)", ErrInvalidResultType, result)
 }

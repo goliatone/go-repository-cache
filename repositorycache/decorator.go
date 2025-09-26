@@ -393,10 +393,10 @@ func (c *CachedRepository[T]) extractIdentifier(record T) (string, error) {
 // invalidateAfterCreate invalidates query result caches after create operations
 func (c *CachedRepository[T]) invalidateAfterCreate(ctx context.Context) error {
 	// Invalidate all List and Count caches since new records affect pagination and totals
-	if err := c.invalidateByPrefix(ctx, "List:"); err != nil {
+	if err := c.invalidateByPrefix(ctx, "List"); err != nil {
 		return err
 	}
-	return c.invalidateByPrefix(ctx, "Count:")
+	return c.invalidateByPrefix(ctx, "Count")
 }
 
 // invalidateAfterUpdate invalidates all relevant caches after update operations
@@ -404,21 +404,19 @@ func (c *CachedRepository[T]) invalidateAfterUpdate(ctx context.Context, record 
 	// Try to invalidate specific ID-based cache
 	if id, err := c.extractID(record); err == nil {
 		// Invalidate all GetByID variations for this ID
-		// Note: We use broader prefix matching since key format includes brackets
-		c.invalidateByPrefix(ctx, fmt.Sprintf("GetByID:[%s", id))
+		c.invalidateByPrefix(ctx, fmt.Sprintf("GetByID:%s", id))
 	}
 
 	// Try to invalidate specific identifier-based cache
 	if identifier, err := c.extractIdentifier(record); err == nil {
 		// Invalidate all GetByIdentifier variations for this identifier
-		// Note: We use broader prefix matching since key format includes brackets
-		c.invalidateByPrefix(ctx, fmt.Sprintf("GetByIdentifier:[%s", identifier))
+		c.invalidateByPrefix(ctx, fmt.Sprintf("GetByIdentifier:%s", identifier))
 	}
 
 	// Invalidate all query result caches (List/Count/Get with criteria)
-	c.invalidateByPrefix(ctx, "List:")
-	c.invalidateByPrefix(ctx, "Count:")
-	c.invalidateByPrefix(ctx, "Get:")
+	c.invalidateByPrefix(ctx, "List")
+	c.invalidateByPrefix(ctx, "Count")
+	c.invalidateByPrefix(ctx, "Get")
 
 	return nil
 }
@@ -459,10 +457,10 @@ func (c *CachedRepository[T]) invalidateAfterBulkCreate(ctx context.Context) err
 func (c *CachedRepository[T]) invalidateAfterCriteriaOperation(ctx context.Context) error {
 	// For operations like DeleteMany where we don't have the actual records,
 	// we must invalidate all relevant caches since we can't target specific keys
-	c.invalidateByPrefix(ctx, "GetByID:")
-	c.invalidateByPrefix(ctx, "GetByIdentifier:")
-	c.invalidateByPrefix(ctx, "List:")
-	c.invalidateByPrefix(ctx, "Count:")
-	c.invalidateByPrefix(ctx, "Get:")
+	c.invalidateByPrefix(ctx, "GetByID")
+	c.invalidateByPrefix(ctx, "GetByIdentifier")
+	c.invalidateByPrefix(ctx, "List")
+	c.invalidateByPrefix(ctx, "Count")
+	c.invalidateByPrefix(ctx, "Get")
 	return nil
 }

@@ -336,8 +336,17 @@ func (t *trackingKeySerializer) SerializeKey(method string, args ...any) string 
 		return customKey
 	}
 
-	// Default key generation - use : as separator to match invalidation logic
-	return fmt.Sprintf("%s:%s", method, argStr)
+	if len(args) == 0 {
+		return method
+	}
+
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, method)
+	for _, arg := range args {
+		parts = append(parts, fmt.Sprintf("%v", arg))
+	}
+
+	return strings.Join(parts, ":")
 }
 
 func (t *trackingKeySerializer) getCalls() []string {
@@ -382,7 +391,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		{
 			name: "Get_CacheHit",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("Get:[[]]", TestUser{ID: "cached-1", Name: "Cached User"})
+				cache.SetCacheValue("Get", TestUser{ID: "cached-1", Name: "Cached User"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {
 				// Should not be called due to cache hit
@@ -402,7 +411,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		{
 			name: "GetByID_CacheHit",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("GetByID:[user-1 []]", TestUser{ID: "user-1", Name: "Cached User"})
+				cache.SetCacheValue("GetByID:user-1", TestUser{ID: "user-1", Name: "Cached User"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -424,7 +433,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 					Records: []TestUser{{ID: "1", Name: "User 1"}, {ID: "2", Name: "User 2"}},
 					Total:   2,
 				}
-				cache.SetCacheValue("List:[[]]", result)
+				cache.SetCacheValue("List", result)
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -442,7 +451,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		{
 			name: "Count_CacheHit",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("Count:[[]]", 42)
+				cache.SetCacheValue("Count", 42)
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -460,7 +469,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		{
 			name: "GetByIdentifier_CacheHit",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("GetByIdentifier:[username123 []]", TestUser{ID: "user-1", Name: "User by identifier"})
+				cache.SetCacheValue("GetByIdentifier:username123", TestUser{ID: "user-1", Name: "User by identifier"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -1032,7 +1041,7 @@ func TestCacheInvalidation_Create(t *testing.T) {
 	cacheCalls := cacheService.getCalls()
 	found := false
 	for _, call := range cacheCalls {
-		if strings.Contains(call, "Delete:List:") || strings.Contains(call, "Delete:Count:") {
+		if strings.HasPrefix(call, "Delete:List") || strings.HasPrefix(call, "Delete:Count") {
 			found = true
 			break
 		}
@@ -1124,18 +1133,17 @@ func TestCacheInvalidation_Update(t *testing.T) {
 
 	// Verify cache invalidation was called for relevant prefixes
 	cacheCalls := cacheService.getCalls()
-	// The actual key format is "GetByID:[user-1 []]" so we need to check for the right patterns
-	expectedPrefixes := []string{"GetByID:[user-1", "List:", "Count:"}
-	for _, prefix := range expectedPrefixes {
+	expectedPrefixes := []string{"Delete:GetByID:user-1", "Delete:List", "Delete:Count"}
+	for _, expected := range expectedPrefixes {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.Contains(call, "Delete:"+prefix) {
+			if strings.HasPrefix(call, expected) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("Expected cache Delete calls for prefix '%s' after update operation", prefix)
+			t.Errorf("Expected cache Delete calls matching '%s' after update operation", expected)
 		}
 	}
 }
@@ -1212,17 +1220,17 @@ func TestCacheInvalidation_Delete(t *testing.T) {
 
 	// Verify cache invalidation was called for relevant prefixes
 	cacheCalls := cacheService.getCalls()
-	expectedPrefixes := []string{"GetByID:[user-1", "List:", "Count:"}
-	for _, prefix := range expectedPrefixes {
+	expectedDeleteCalls := []string{"Delete:GetByID:user-1", "Delete:List", "Delete:Count"}
+	for _, expected := range expectedDeleteCalls {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.Contains(call, "Delete:"+prefix) {
+			if strings.HasPrefix(call, expected) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("Expected cache Delete calls for prefix '%s' after delete operation", prefix)
+			t.Errorf("Expected cache Delete calls matching '%s' after delete operation", expected)
 		}
 	}
 }
@@ -1293,7 +1301,7 @@ func TestCacheInvalidation_BulkOperations(t *testing.T) {
 	cacheCalls := cacheService.getCalls()
 	found := false
 	for _, call := range cacheCalls {
-		if strings.Contains(call, "Delete:List:") || strings.Contains(call, "Delete:Count:") {
+		if strings.HasPrefix(call, "Delete:List") || strings.HasPrefix(call, "Delete:Count") {
 			found = true
 			break
 		}
@@ -1355,11 +1363,11 @@ func TestCacheInvalidation_CriteriaOperations(t *testing.T) {
 	cacheCalls := cacheService.getCalls()
 	// For criteria operations, we should see Delete calls for prefixes that actually have cached keys
 	// In our test, we only cached GetByID, List, and Count, so only those should have Delete calls
-	expectedPrefixes := []string{"GetByID:", "List:", "Count:"}
-	for _, prefix := range expectedPrefixes {
+	expectedDeletePrefixes := []string{"Delete:GetByID", "Delete:List", "Delete:Count"}
+	for _, prefix := range expectedDeletePrefixes {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.Contains(call, "Delete:"+prefix) {
+			if strings.HasPrefix(call, prefix) {
 				found = true
 				break
 			}
@@ -1488,7 +1496,7 @@ func TestCacheInvalidation_Concurrent(t *testing.T) {
 	cacheCalls := cacheService.getCalls()
 	deleteCount := 0
 	for _, call := range cacheCalls {
-		if strings.Contains(call, "Delete:List:") || strings.Contains(call, "Delete:Count:") {
+		if strings.HasPrefix(call, "Delete:List") || strings.HasPrefix(call, "Delete:Count") {
 			deleteCount++
 		}
 	}
