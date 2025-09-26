@@ -7,7 +7,7 @@ import (
 	"time"
 
 	repository "github.com/goliatone/go-repository-bun"
-	"github.com/goliatone/go-repository-cache/internal/cacheinfra"
+	"github.com/goliatone/go-repository-cache/cache"
 	"github.com/goliatone/go-repository-cache/pkg/di"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -283,7 +283,7 @@ func main() {
 	fmt.Println("📦 Step 1: Setting up DI container with cache configuration...")
 
 	// Configure cache with custom settings (see REPOSITORY_CACHE.md §Internal Cache Infrastructure)
-	config := cacheinfra.Config{
+	config := cache.Config{
 		Capacity:             1000,            // Maximum number of cache entries
 		NumShards:            8,               // Number of cache shards for concurrency
 		EvictionPercentage:   10,              // Percentage to evict when capacity reached
