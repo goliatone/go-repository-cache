@@ -16,6 +16,8 @@ type FetchFn[T any] func(ctx context.Context) (T, error)
 type CacheService interface {
 	GetOrFetch(ctx context.Context, key string, fetchFn any) (any, error)
 	Delete(ctx context.Context, key string) error
+	DeleteByPrefix(ctx context.Context, prefix string) error
+	InvalidateKeys(ctx context.Context, keys []string) error
 }
 
 // GetOrFetch is a type-safe wrapper function that provides generic support for CacheService.
@@ -25,5 +27,22 @@ func GetOrFetch[T any](ctx context.Context, service CacheService, key string, fe
 		var zero T
 		return zero, err
 	}
-	return result.(T), nil
+
+	// Handle nil interface case: if result is nil, return zero value of T
+	// This prevents panic when T is an interface and result is a nil interface{}
+	if result == nil {
+		var zero T
+		return zero, nil
+	}
+
+	// Use comma-ok form to safely assert the type
+	// This provides graceful failure instead of panic if assertion fails
+	if typedResult, ok := result.(T); ok {
+		return typedResult, nil
+	}
+
+	// If type assertion fails, return zero value - this should not happen
+	// in normal operation but provides a safety net
+	var zero T
+	return zero, nil
 }
