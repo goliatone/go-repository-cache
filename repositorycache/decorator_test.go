@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -126,7 +127,8 @@ func (m *mockRepository[T]) CreateTx(ctx context.Context, tx bun.IDB, record T, 
 	panic("CreateTx not implemented in mock")
 }
 func (m *mockRepository[T]) CreateMany(ctx context.Context, records []T, criteria ...repository.InsertCriteria) ([]T, error) {
-	panic("CreateMany not implemented in mock")
+	m.recordCall("CreateMany")
+	return records, m.createError
 }
 func (m *mockRepository[T]) CreateManyTx(ctx context.Context, tx bun.IDB, records []T, criteria ...repository.InsertCriteria) ([]T, error) {
 	panic("CreateManyTx not implemented in mock")
@@ -165,7 +167,8 @@ func (m *mockRepository[T]) DeleteTx(ctx context.Context, tx bun.IDB, record T) 
 	panic("DeleteTx not implemented in mock")
 }
 func (m *mockRepository[T]) DeleteMany(ctx context.Context, criteria ...repository.DeleteCriteria) error {
-	panic("DeleteMany not implemented in mock")
+	m.recordCall("DeleteMany")
+	return m.deleteError
 }
 func (m *mockRepository[T]) DeleteManyTx(ctx context.Context, tx bun.IDB, criteria ...repository.DeleteCriteria) error {
 	panic("DeleteManyTx not implemented in mock")
@@ -333,8 +336,8 @@ func (t *trackingKeySerializer) SerializeKey(method string, args ...any) string 
 		return customKey
 	}
 
-	// Default key generation
-	return fmt.Sprintf("%s_%s", method, argStr)
+	// Default key generation - use : as separator to match invalidation logic
+	return fmt.Sprintf("%s:%s", method, argStr)
 }
 
 func (t *trackingKeySerializer) getCalls() []string {
@@ -379,7 +382,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		{
 			name: "Get_CacheHit",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("Get_[[]]", TestUser{ID: "cached-1", Name: "Cached User"})
+				cache.SetCacheValue("Get:[[]]", TestUser{ID: "cached-1", Name: "Cached User"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {
 				// Should not be called due to cache hit
@@ -399,7 +402,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		{
 			name: "GetByID_CacheHit",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("GetByID_[user-1 []]", TestUser{ID: "user-1", Name: "Cached User"})
+				cache.SetCacheValue("GetByID:[user-1 []]", TestUser{ID: "user-1", Name: "Cached User"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -421,7 +424,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 					Records: []TestUser{{ID: "1", Name: "User 1"}, {ID: "2", Name: "User 2"}},
 					Total:   2,
 				}
-				cache.SetCacheValue("List_[[]]", result)
+				cache.SetCacheValue("List:[[]]", result)
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -439,7 +442,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		{
 			name: "Count_CacheHit",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("Count_[[]]", 42)
+				cache.SetCacheValue("Count:[[]]", 42)
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -457,7 +460,7 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		{
 			name: "GetByIdentifier_CacheHit",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("GetByIdentifier_[username123 []]", TestUser{ID: "user-1", Name: "User by identifier"})
+				cache.SetCacheValue("GetByIdentifier:[username123 []]", TestUser{ID: "user-1", Name: "User by identifier"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -651,7 +654,7 @@ func TestCachedReadMethods_ErrorPropagation(t *testing.T) {
 		{
 			name: "Get_CacheError",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheError("Get_[[]]", errors.New("cache error"))
+				cache.SetCacheError("Get:[[]]", errors.New("cache error"))
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -932,5 +935,565 @@ func TestCacheScenarios_WithFixtures(t *testing.T) {
 	// Verify the results are the same
 	if !reflect.DeepEqual(records1, records2) {
 		t.Error("Results from cache hit should match results from cache miss")
+	}
+}
+
+// ---- Invalidation Tests ----
+
+// Test cache invalidation after create operations
+func TestCacheInvalidation_Create(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := newTrackingKeySerializer()
+
+	// Set up initial repository state
+	baseRepo.listRecords = []TestUser{
+		{ID: "user-1", Name: "User 1"},
+		{ID: "user-2", Name: "User 2"},
+	}
+	baseRepo.listTotal = 2
+	baseRepo.countResult = 2
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	// Populate cache with List and Count operations
+	records1, total1, err := cached.List(context.Background())
+	if err != nil {
+		t.Fatalf("Initial List call failed: %v", err)
+	}
+	if len(records1) != 2 || total1 != 2 {
+		t.Fatalf("Expected 2 records and total 2, got %d records and total %d", len(records1), total1)
+	}
+
+	count1, err := cached.Count(context.Background())
+	if err != nil {
+		t.Fatalf("Initial Count call failed: %v", err)
+	}
+	if count1 != 2 {
+		t.Fatalf("Expected count 2, got %d", count1)
+	}
+
+	// Clear call tracking to verify cache hits
+	baseRepo.clearCalls()
+
+	// Verify cache hits (should not call repository)
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+	calls := baseRepo.getCalls()
+	if len(calls) != 0 {
+		t.Fatalf("Expected no repository calls (cache hit), got %d: %v", len(calls), calls)
+	}
+
+	// Now create a new record
+	baseRepo.createResult = TestUser{ID: "user-3", Name: "User 3"}
+	// Update repository state to reflect the new record
+	baseRepo.listRecords = []TestUser{
+		{ID: "user-1", Name: "User 1"},
+		{ID: "user-2", Name: "User 2"},
+		{ID: "user-3", Name: "User 3"},
+	}
+	baseRepo.listTotal = 3
+	baseRepo.countResult = 3
+
+	newUser := TestUser{Name: "User 3"}
+	_, err = cached.Create(context.Background(), newUser)
+	if err != nil {
+		t.Fatalf("Create operation failed: %v", err)
+	}
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Verify that List and Count caches were invalidated (should call repository)
+	records2, total2, err := cached.List(context.Background())
+	if err != nil {
+		t.Fatalf("List after create failed: %v", err)
+	}
+	if len(records2) != 3 || total2 != 3 {
+		t.Errorf("Expected 3 records and total 3 after create, got %d records and total %d", len(records2), total2)
+	}
+
+	count2, err := cached.Count(context.Background())
+	if err != nil {
+		t.Fatalf("Count after create failed: %v", err)
+	}
+	if count2 != 3 {
+		t.Errorf("Expected count 3 after create, got %d", count2)
+	}
+
+	// Verify repository was called (cache invalidated)
+	calls = baseRepo.getCalls()
+	expectedCalls := []string{"List", "Count"}
+	if len(calls) != len(expectedCalls) {
+		t.Errorf("Expected %d repository calls after cache invalidation, got %d: %v", len(expectedCalls), len(calls), calls)
+	}
+
+	// Verify cache invalidation was called
+	cacheCalls := cacheService.getCalls()
+	found := false
+	for _, call := range cacheCalls {
+		if strings.Contains(call, "Delete:List:") || strings.Contains(call, "Delete:Count:") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected cache Delete calls for List and Count prefixes after create operation")
+	}
+}
+
+// Test cache invalidation after update operations
+func TestCacheInvalidation_Update(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := newTrackingKeySerializer()
+
+	originalUser := TestUser{ID: "user-1", Name: "Original User"}
+	updatedUser := TestUser{ID: "user-1", Name: "Updated User"}
+
+	// Set up repository to return original user initially
+	baseRepo.getByIDResult = originalUser
+	baseRepo.listRecords = []TestUser{originalUser}
+	baseRepo.listTotal = 1
+	baseRepo.countResult = 1
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	// Populate cache with GetByID, List, and Count operations
+	user1, err := cached.GetByID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("Initial GetByID call failed: %v", err)
+	}
+	if user1.Name != "Original User" {
+		t.Fatalf("Expected 'Original User', got '%s'", user1.Name)
+	}
+
+	_, _, err = cached.List(context.Background())
+	if err != nil {
+		t.Fatalf("Initial List call failed: %v", err)
+	}
+
+	_, err = cached.Count(context.Background())
+	if err != nil {
+		t.Fatalf("Initial Count call failed: %v", err)
+	}
+
+	// Clear call tracking to verify cache hits
+	baseRepo.clearCalls()
+
+	// Verify cache hits
+	_, _ = cached.GetByID(context.Background(), "user-1")
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+	calls := baseRepo.getCalls()
+	if len(calls) != 0 {
+		t.Fatalf("Expected no repository calls (cache hit), got %d: %v", len(calls), calls)
+	}
+
+	// Now update the user
+	baseRepo.updateResult = updatedUser
+	// Update repository state to reflect the updated record
+	baseRepo.getByIDResult = updatedUser
+	baseRepo.listRecords = []TestUser{updatedUser}
+
+	_, err = cached.Update(context.Background(), updatedUser)
+	if err != nil {
+		t.Fatalf("Update operation failed: %v", err)
+	}
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Verify that relevant caches were invalidated
+	user2, err := cached.GetByID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("GetByID after update failed: %v", err)
+	}
+	if user2.Name != "Updated User" {
+		t.Errorf("Expected 'Updated User' after update, got '%s'", user2.Name)
+	}
+
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+
+	// Verify repository was called (cache invalidated)
+	calls = baseRepo.getCalls()
+	if len(calls) < 3 {
+		t.Errorf("Expected at least 3 repository calls after cache invalidation, got %d: %v", len(calls), calls)
+	}
+
+	// Verify cache invalidation was called for relevant prefixes
+	cacheCalls := cacheService.getCalls()
+	// The actual key format is "GetByID:[user-1 []]" so we need to check for the right patterns
+	expectedPrefixes := []string{"GetByID:[user-1", "List:", "Count:"}
+	for _, prefix := range expectedPrefixes {
+		found := false
+		for _, call := range cacheCalls {
+			if strings.Contains(call, "Delete:"+prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected cache Delete calls for prefix '%s' after update operation", prefix)
+		}
+	}
+}
+
+// Test cache invalidation after delete operations
+func TestCacheInvalidation_Delete(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := newTrackingKeySerializer()
+
+	userToDelete := TestUser{ID: "user-1", Name: "User to Delete"}
+
+	// Set up repository state
+	baseRepo.getByIDResult = userToDelete
+	baseRepo.listRecords = []TestUser{userToDelete, {ID: "user-2", Name: "User 2"}}
+	baseRepo.listTotal = 2
+	baseRepo.countResult = 2
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	// Populate cache
+	_, _ = cached.GetByID(context.Background(), "user-1")
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+
+	// Clear call tracking to verify cache hits
+	baseRepo.clearCalls()
+
+	// Verify cache hits
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+	calls := baseRepo.getCalls()
+	if len(calls) != 0 {
+		t.Fatalf("Expected no repository calls (cache hit), got %d: %v", len(calls), calls)
+	}
+
+	// Now delete the user
+	// Update repository state to reflect deletion
+	baseRepo.listRecords = []TestUser{{ID: "user-2", Name: "User 2"}}
+	baseRepo.listTotal = 1
+	baseRepo.countResult = 1
+
+	err := cached.Delete(context.Background(), userToDelete)
+	if err != nil {
+		t.Fatalf("Delete operation failed: %v", err)
+	}
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Verify that relevant caches were invalidated
+	records, total, err := cached.List(context.Background())
+	if err != nil {
+		t.Fatalf("List after delete failed: %v", err)
+	}
+	if len(records) != 1 || total != 1 {
+		t.Errorf("Expected 1 record and total 1 after delete, got %d records and total %d", len(records), total)
+	}
+
+	count, err := cached.Count(context.Background())
+	if err != nil {
+		t.Fatalf("Count after delete failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected count 1 after delete, got %d", count)
+	}
+
+	// Verify repository was called (cache invalidated)
+	calls = baseRepo.getCalls()
+	expectedCalls := []string{"List", "Count"}
+	if len(calls) < len(expectedCalls) {
+		t.Errorf("Expected at least %d repository calls after cache invalidation, got %d: %v", len(expectedCalls), len(calls), calls)
+	}
+
+	// Verify cache invalidation was called for relevant prefixes
+	cacheCalls := cacheService.getCalls()
+	expectedPrefixes := []string{"GetByID:[user-1", "List:", "Count:"}
+	for _, prefix := range expectedPrefixes {
+		found := false
+		for _, call := range cacheCalls {
+			if strings.Contains(call, "Delete:"+prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected cache Delete calls for prefix '%s' after delete operation", prefix)
+		}
+	}
+}
+
+// Test bulk operations cache invalidation
+func TestCacheInvalidation_BulkOperations(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := newTrackingKeySerializer()
+
+	// Set up initial state
+	baseRepo.listRecords = []TestUser{{ID: "user-1", Name: "User 1"}}
+	baseRepo.listTotal = 1
+	baseRepo.countResult = 1
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	// Populate cache
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Verify cache hits
+	_, _, _ = cached.List(context.Background())
+	calls := baseRepo.getCalls()
+	if len(calls) != 0 {
+		t.Fatalf("Expected no repository calls (cache hit), got %d: %v", len(calls), calls)
+	}
+
+	// Test CreateMany
+	newUsers := []TestUser{
+		{Name: "User 2"},
+		{Name: "User 3"},
+	}
+	baseRepo.createError = nil // Ensure no error
+	_, err := cached.CreateMany(context.Background(), newUsers)
+	if err != nil {
+		t.Fatalf("CreateMany operation failed: %v", err)
+	}
+
+	// Update repository state
+	baseRepo.listRecords = []TestUser{
+		{ID: "user-1", Name: "User 1"},
+		{ID: "user-2", Name: "User 2"},
+		{ID: "user-3", Name: "User 3"},
+	}
+	baseRepo.listTotal = 3
+	baseRepo.countResult = 3
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Verify cache was invalidated (should call repository)
+	_, _, err = cached.List(context.Background())
+	if err != nil {
+		t.Fatalf("List after CreateMany failed: %v", err)
+	}
+
+	// Verify repository was called (cache invalidated)
+	calls = baseRepo.getCalls()
+	if len(calls) == 0 {
+		t.Error("Expected repository calls after CreateMany cache invalidation")
+	}
+
+	// Verify cache invalidation was called
+	cacheCalls := cacheService.getCalls()
+	found := false
+	for _, call := range cacheCalls {
+		if strings.Contains(call, "Delete:List:") || strings.Contains(call, "Delete:Count:") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected cache Delete calls after CreateMany operation")
+	}
+}
+
+// Test criteria-based operations cache invalidation
+func TestCacheInvalidation_CriteriaOperations(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := newTrackingKeySerializer()
+
+	// Set up initial state
+	baseRepo.getByIDResult = TestUser{ID: "user-1", Name: "User 1"}
+	baseRepo.listRecords = []TestUser{{ID: "user-1", Name: "User 1"}}
+	baseRepo.listTotal = 1
+	baseRepo.countResult = 1
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	// Populate cache
+	_, _ = cached.GetByID(context.Background(), "user-1")
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Test DeleteMany (criteria-based operation)
+	err := cached.DeleteMany(context.Background())
+	if err != nil {
+		t.Fatalf("DeleteMany operation failed: %v", err)
+	}
+
+	// Update repository state
+	baseRepo.listRecords = []TestUser{}
+	baseRepo.listTotal = 0
+	baseRepo.countResult = 0
+	// The user should no longer exist after DeleteMany
+	baseRepo.getByIDError = fmt.Errorf("user not found")
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Verify all relevant caches were invalidated
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+
+	// Verify repository was called (cache invalidated)
+	calls := baseRepo.getCalls()
+	if len(calls) < 2 {
+		t.Error("Expected repository calls after DeleteMany cache invalidation")
+	}
+
+	// Verify comprehensive cache invalidation was called
+	cacheCalls := cacheService.getCalls()
+	// For criteria operations, we should see Delete calls for prefixes that actually have cached keys
+	// In our test, we only cached GetByID, List, and Count, so only those should have Delete calls
+	expectedPrefixes := []string{"GetByID:", "List:", "Count:"}
+	for _, prefix := range expectedPrefixes {
+		found := false
+		for _, call := range cacheCalls {
+			if strings.Contains(call, "Delete:"+prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected cache Delete calls for prefix '%s' after DeleteMany operation", prefix)
+		}
+	}
+
+	// Verify that invalidateAfterCriteriaOperation was called by checking the behavior:
+	// After DeleteMany, if we try to access the same data, it should call the repository (cache miss)
+	calls = baseRepo.getCalls()
+	initialCallCount := len(calls)
+
+	// Try accessing data that should have been invalidated
+	_, _ = cached.GetByID(context.Background(), "user-1")
+	calls = baseRepo.getCalls()
+	if len(calls) <= initialCallCount {
+		t.Error("Expected additional repository call after cache invalidation for GetByID")
+	}
+}
+
+// Test negative caching behavior when records are deleted
+func TestCacheInvalidation_NegativeCaching(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := newTrackingKeySerializer()
+
+	userToDelete := TestUser{ID: "user-1", Name: "User to Delete"}
+
+	// Set up repository to return user initially
+	baseRepo.getByIDResult = userToDelete
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	// First, get the user to populate cache
+	user1, err := cached.GetByID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("Initial GetByID failed: %v", err)
+	}
+	if user1.Name != "User to Delete" {
+		t.Fatalf("Expected 'User to Delete', got '%s'", user1.Name)
+	}
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Verify cache hit
+	_, _ = cached.GetByID(context.Background(), "user-1")
+	calls := baseRepo.getCalls()
+	if len(calls) != 0 {
+		t.Fatalf("Expected no repository calls (cache hit), got %d: %v", len(calls), calls)
+	}
+
+	// Now delete the user
+	err = cached.Delete(context.Background(), userToDelete)
+	if err != nil {
+		t.Fatalf("Delete operation failed: %v", err)
+	}
+
+	// Update repository to return error when trying to get deleted user
+	baseRepo.getByIDError = fmt.Errorf("user not found")
+
+	// Clear call tracking
+	baseRepo.clearCalls()
+
+	// Try to get the deleted user - should call repository and get error
+	_, err = cached.GetByID(context.Background(), "user-1")
+	if err == nil {
+		t.Error("Expected error when trying to get deleted user")
+	}
+	if err.Error() != "user not found" {
+		t.Errorf("Expected 'user not found' error, got '%v'", err)
+	}
+
+	// Verify repository was called (cache was invalidated)
+	calls = baseRepo.getCalls()
+	if len(calls) == 0 {
+		t.Error("Expected repository call after cache invalidation for deleted user")
+	}
+}
+
+// Test concurrent cache invalidation
+func TestCacheInvalidation_Concurrent(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := newTrackingKeySerializer()
+
+	// Set up initial state
+	baseRepo.listRecords = []TestUser{{ID: "user-1", Name: "User 1"}}
+	baseRepo.listTotal = 1
+	baseRepo.countResult = 1
+	baseRepo.createResult = TestUser{ID: "user-2", Name: "User 2"}
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	// Populate cache
+	_, _, _ = cached.List(context.Background())
+	_, _ = cached.Count(context.Background())
+
+	// Test concurrent create operations that should trigger invalidation
+	var wg sync.WaitGroup
+	errors := make(chan error, 10)
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			newUser := TestUser{Name: fmt.Sprintf("User %d", id+10)}
+			_, err := cached.Create(context.Background(), newUser)
+			if err != nil {
+				errors <- err
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errors)
+
+	// Check for errors
+	for err := range errors {
+		t.Errorf("Concurrent create failed: %v", err)
+	}
+
+	// Verify that cache invalidation was called multiple times
+	cacheCalls := cacheService.getCalls()
+	deleteCount := 0
+	for _, call := range cacheCalls {
+		if strings.Contains(call, "Delete:List:") || strings.Contains(call, "Delete:Count:") {
+			deleteCount++
+		}
+	}
+
+	if deleteCount == 0 {
+		t.Error("Expected cache Delete calls from concurrent operations")
 	}
 }
