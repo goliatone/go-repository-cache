@@ -1,0 +1,49 @@
+{
+  "test_users": [
+    {
+      "id": "user-1",
+      "name": "Original User",
+      "identifier": "user1@example.com"
+    },
+    {
+      "id": "user-2",
+      "name": "Second User",
+      "identifier": "user2@example.com"
+    },
+    {
+      "id": "user-3",
+      "name": "Third User",
+      "identifier": "user3@example.com"
+    }
+  ],
+  "updated_users": [
+    {
+      "id": "user-1",
+      "name": "Updated User",
+      "identifier": "updated1@example.com"
+    },
+    {
+      "id": "user-2",
+      "name": "Modified User",
+      "identifier": "modified2@example.com"
+    }
+  ],
+  "cache_scenarios": {
+    "create_invalidation": {
+      "description": "Testing cache invalidation after create operations",
+      "initial_list_count": 2,
+      "after_create_list_count": 3,
+      "operations": ["create", "list"]
+    },
+    "update_invalidation": {
+      "description": "Testing cache invalidation after update operations",
+      "operations": ["get_by_id", "update", "get_by_id"]
+    },
+    "delete_invalidation": {
+      "description": "Testing cache invalidation after delete operations",
+      "initial_count": 3,
+      "after_delete_count": 2,
+      "operations": ["count", "delete", "count"]
+    }
+  }
+}
