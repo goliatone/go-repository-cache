@@ -29,6 +29,17 @@ type CachedRepository[T any] struct {
 	keyRegistry   *sync.Map // Track active cache keys for invalidation
 }
 
+func toAnySlice[T any](items []T) []any {
+	if len(items) == 0 {
+		return nil
+	}
+	args := make([]any, len(items))
+	for i, item := range items {
+		args[i] = item
+	}
+	return args
+}
+
 // New creates a new CachedRepository that wraps the base repository with caching
 func New[T any](base repository.Repository[T], cacheService cache.CacheService, keySerializer cache.KeySerializer) *CachedRepository[T] {
 	return &CachedRepository[T]{
@@ -41,7 +52,7 @@ func New[T any](base repository.Repository[T], cacheService cache.CacheService, 
 
 // Get retrieves a single record using the provided criteria, with caching
 func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.SelectCriteria) (T, error) {
-	key := c.keySerializer.SerializeKey("Get", criteria)
+	key := c.keySerializer.SerializeKey("Get", toAnySlice(criteria)...)
 	c.trackKey(key)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.Get(ctx, criteria...)
@@ -50,7 +61,8 @@ func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.Se
 
 // GetByID retrieves a record by ID with optional criteria, with caching
 func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria ...repository.SelectCriteria) (T, error) {
-	key := c.keySerializer.SerializeKey("GetByID", id, criteria)
+	args := append([]any{id}, toAnySlice(criteria)...)
+	key := c.keySerializer.SerializeKey("GetByID", args...)
 	c.trackKey(key)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.GetByID(ctx, id, criteria...)
@@ -59,7 +71,7 @@ func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria .
 
 // List retrieves multiple records using the provided criteria, with caching
 func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.SelectCriteria) ([]T, int, error) {
-	key := c.keySerializer.SerializeKey("List", criteria)
+	key := c.keySerializer.SerializeKey("List", toAnySlice(criteria)...)
 	c.trackKey(key)
 	res, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (listResult[T], error) {
 		records, total, err := c.base.List(ctx, criteria...)
@@ -73,7 +85,7 @@ func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.S
 
 // Count returns the number of records matching the criteria, with caching
 func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.SelectCriteria) (int, error) {
-	key := c.keySerializer.SerializeKey("Count", criteria)
+	key := c.keySerializer.SerializeKey("Count", toAnySlice(criteria)...)
 	c.trackKey(key)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (int, error) {
 		return c.base.Count(ctx, criteria...)
@@ -82,7 +94,8 @@ func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.
 
 // GetByIdentifier retrieves a record by identifier with optional criteria, with caching
 func (c *CachedRepository[T]) GetByIdentifier(ctx context.Context, identifier string, criteria ...repository.SelectCriteria) (T, error) {
-	key := c.keySerializer.SerializeKey("GetByIdentifier", identifier, criteria)
+	args := append([]any{identifier}, toAnySlice(criteria)...)
+	key := c.keySerializer.SerializeKey("GetByIdentifier", args...)
 	c.trackKey(key)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.GetByIdentifier(ctx, identifier, criteria...)

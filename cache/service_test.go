@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -97,8 +98,8 @@ func TestGetOrFetch_TypeAssertionFailure(t *testing.T) {
 		return 42, nil
 	})
 
-	if err != nil {
-		t.Errorf("expected no error but got: %v", err)
+	if !errors.Is(err, ErrInvalidResultType) {
+		t.Errorf("expected ErrInvalidResultType but got: %v", err)
 	}
 
 	if result != 0 {

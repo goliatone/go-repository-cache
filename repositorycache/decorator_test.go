@@ -663,7 +663,7 @@ func TestCachedReadMethods_ErrorPropagation(t *testing.T) {
 		{
 			name: "Get_CacheError",
 			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheError("Get:[[]]", errors.New("cache error"))
+				cache.SetCacheError("Get", errors.New("cache error"))
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -854,11 +854,11 @@ func TestKeySerializerIntegration(t *testing.T) {
 	// Verify key serializer was called
 	calls := keySerializer.getCalls()
 	expectedCalls := []string{
-		"Get:[[]]",
-		"GetByID:[test-id []]",
-		"List:[[]]",
-		"Count:[[]]",
-		"GetByIdentifier:[test-identifier []]",
+		"Get:[]",
+		"GetByID:[test-id]",
+		"List:[]",
+		"Count:[]",
+		"GetByIdentifier:[test-identifier]",
 	}
 
 	if len(calls) != len(expectedCalls) {
