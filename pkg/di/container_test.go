@@ -2,6 +2,7 @@ package di
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,19 +138,19 @@ func TestKeySerializerIntegration(t *testing.T) {
 			name:     "single string arg",
 			method:   "GetByID",
 			args:     []any{"123"},
-			expected: "GetByID:123",
+			expected: strings.Join([]string{"GetByID", "123"}, cache.KeySeparator),
 		},
 		{
 			name:     "multiple args",
 			method:   "List",
 			args:     []any{"user", 10, true},
-			expected: "List:user:10:true",
+			expected: strings.Join([]string{"List", "user", "10", "true"}, cache.KeySeparator),
 		},
 		{
 			name:     "nil arg",
 			method:   "Count",
 			args:     []any{nil},
-			expected: "Count:nil",
+			expected: strings.Join([]string{"Count", "nil"}, cache.KeySeparator),
 		},
 	}
 

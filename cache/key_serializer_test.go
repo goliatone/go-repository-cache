@@ -27,6 +27,10 @@ type TestFixtures struct {
 	Scenarios []TestScenario `json:"scenarios"`
 }
 
+func joinWithSeparator(parts ...string) string {
+	return strings.Join(parts, KeySeparator)
+}
+
 func TestDefaultKeySerializer_BasicTypes(t *testing.T) {
 	serializer := NewDefaultKeySerializer()
 
@@ -46,19 +50,19 @@ func TestDefaultKeySerializer_BasicTypes(t *testing.T) {
 			name:   "single int",
 			method: "GetByID",
 			args:   []any{42},
-			want:   "GetByID:42",
+			want:   joinWithSeparator("GetByID", "42"),
 		},
 		{
 			name:   "multiple basic types",
 			method: "Get",
 			args:   []any{1, "hello", true, 3.14},
-			want:   "Get:1:hello:true:3.14",
+			want:   joinWithSeparator("Get", "1", "hello", "true", "3.14"),
 		},
 		{
 			name:   "string with special chars",
 			method: "Search",
 			args:   []any{"hello:world"},
-			want:   "Search:hello:world",
+			want:   joinWithSeparator("Search", "hello:world"),
 		},
 	}
 
@@ -85,25 +89,25 @@ func TestDefaultKeySerializer_NilValues(t *testing.T) {
 			name:   "nil interface",
 			method: "GetByPtr",
 			args:   []any{nil},
-			want:   "GetByPtr:nil",
+			want:   joinWithSeparator("GetByPtr", "nil"),
 		},
 		{
 			name:   "nil pointer",
 			method: "GetByRef",
 			args:   []any{(*int)(nil)},
-			want:   "GetByRef:nil",
+			want:   joinWithSeparator("GetByRef", "nil"),
 		},
 		{
 			name:   "nil slice",
 			method: "GetBySlice",
 			args:   []any{([]int)(nil)},
-			want:   "GetBySlice:slice:nil",
+			want:   joinWithSeparator("GetBySlice", "slice:nil"),
 		},
 		{
 			name:   "nil map",
 			method: "GetByMap",
 			args:   []any{(map[string]int)(nil)},
-			want:   "GetByMap:map:nil",
+			want:   joinWithSeparator("GetByMap", "map:nil"),
 		},
 	}
 
@@ -130,25 +134,25 @@ func TestDefaultKeySerializer_Slices(t *testing.T) {
 			name:   "empty slice",
 			method: "GetByIDs",
 			args:   []any{[]int{}},
-			want:   "GetByIDs:slice[0]:{}",
+			want:   joinWithSeparator("GetByIDs", "slice[0]:{}"),
 		},
 		{
 			name:   "int slice",
 			method: "GetByIDs",
 			args:   []any{[]int{1, 2, 3}},
-			want:   "GetByIDs:slice[3]:{1,2,3}",
+			want:   joinWithSeparator("GetByIDs", "slice[3]:{1,2,3}"),
 		},
 		{
 			name:   "string slice",
 			method: "GetByNames",
 			args:   []any{[]string{"alice", "bob"}},
-			want:   "GetByNames:slice[2]:{alice,bob}",
+			want:   joinWithSeparator("GetByNames", "slice[2]:{alice,bob}"),
 		},
 		{
 			name:   "nested slice",
 			method: "GetByMatrix",
 			args:   []any{[][]int{{1, 2}, {3, 4}}},
-			want:   "GetByMatrix:slice[2]:{slice[2]:{1,2},slice[2]:{3,4}}",
+			want:   joinWithSeparator("GetByMatrix", "slice[2]:{slice[2]:{1,2},slice[2]:{3,4}}"),
 		},
 	}
 
@@ -175,13 +179,13 @@ func TestDefaultKeySerializer_Arrays(t *testing.T) {
 			name:   "int array",
 			method: "GetByArray",
 			args:   []any{[3]int{1, 2, 3}},
-			want:   "GetByArray:array[3]:{1,2,3}",
+			want:   joinWithSeparator("GetByArray", "array[3]:{1,2,3}"),
 		},
 		{
 			name:   "string array",
 			method: "GetByStrArray",
 			args:   []any{[2]string{"hello", "world"}},
-			want:   "GetByStrArray:array[2]:{hello,world}",
+			want:   joinWithSeparator("GetByStrArray", "array[2]:{hello,world}"),
 		},
 	}
 
@@ -208,13 +212,13 @@ func TestDefaultKeySerializer_Maps(t *testing.T) {
 			name:   "empty map",
 			method: "GetByFilters",
 			args:   []any{map[string]int{}},
-			want:   "GetByFilters:map[0]:{}",
+			want:   joinWithSeparator("GetByFilters", "map[0]:{}"),
 		},
 		{
 			name:   "string to int map",
 			method: "GetByFilters",
 			args:   []any{map[string]int{"age": 25, "count": 10}},
-			want:   "GetByFilters:map[2]:{age=25,count=10}",
+			want:   joinWithSeparator("GetByFilters", "map[2]:{age=25,count=10}"),
 		},
 	}
 
@@ -252,13 +256,13 @@ func TestDefaultKeySerializer_Structs(t *testing.T) {
 			name:   "simple struct",
 			method: "GetUser",
 			args:   []any{User{ID: 1, Name: "alice"}},
-			want:   "GetUser:struct:{ID:1,Name:alice}",
+			want:   joinWithSeparator("GetUser", "struct:{ID:1,Name:alice}"),
 		},
 		{
 			name:   "struct with private field",
 			method: "GetUserPrivate",
 			args:   []any{UserWithPrivate{ID: 2, Name: "bob", password: "secret"}},
-			want:   "GetUserPrivate:struct:{ID:2,Name:bob}",
+			want:   joinWithSeparator("GetUserPrivate", "struct:{ID:2,Name:bob}"),
 		},
 	}
 
@@ -285,7 +289,8 @@ func TestDefaultKeySerializer_Functions(t *testing.T) {
 		t.Errorf("Function serialization should be stable: %v != %v", key1, key2)
 	}
 
-	if !strings.HasPrefix(key1, "GetWithFunc:func:") {
+	funcPrefix := joinWithSeparator("GetWithFunc", "func") + ":"
+	if !strings.HasPrefix(key1, funcPrefix) {
 		t.Errorf("Function serialization should use func: prefix with pointer format, got: %v", key1)
 	}
 }
@@ -306,13 +311,13 @@ func TestDefaultKeySerializer_Pointers(t *testing.T) {
 			name:   "non-nil pointer",
 			method: "GetByPtr",
 			args:   []any{ptr},
-			want:   "GetByPtr:42",
+			want:   joinWithSeparator("GetByPtr", "42"),
 		},
 		{
 			name:   "nil pointer",
 			method: "GetByPtr",
 			args:   []any{(*int)(nil)},
-			want:   "GetByPtr:nil",
+			want:   joinWithSeparator("GetByPtr", "nil"),
 		},
 	}
 
@@ -348,7 +353,8 @@ func TestDefaultKeySerializer_JSONFallback(t *testing.T) {
 	key := serializer.SerializeKey("GetWithChannel", ch)
 
 	// Channel should be serialized with chan: prefix and pointer
-	if !containsPrefix(key, "GetWithChannel:chan:") {
+	channelPrefix := joinWithSeparator("GetWithChannel", "chan") + ":"
+	if !containsPrefix(key, channelPrefix) {
 		t.Errorf("Channel should be serialized with chan: prefix, got: %v", key)
 	}
 }

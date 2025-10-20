@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	repository "github.com/goliatone/go-repository-bun"
+	"github.com/goliatone/go-repository-cache/cache"
 	"github.com/uptrace/bun"
 )
 
@@ -346,7 +347,7 @@ func (t *trackingKeySerializer) SerializeKey(method string, args ...any) string 
 		parts = append(parts, fmt.Sprintf("%v", arg))
 	}
 
-	return strings.Join(parts, ":")
+	return strings.Join(parts, cache.KeySeparator)
 }
 
 func (t *trackingKeySerializer) getCalls() []string {
@@ -383,15 +384,15 @@ func TestNew(t *testing.T) {
 func TestCachedReadMethods_CacheHit(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupCache    func(*mockCacheService)
+		setupCache    func(*mockCacheService, *CachedRepository[TestUser])
 		setupRepo     func(*mockRepository[TestUser])
 		testOperation func(*CachedRepository[TestUser]) error
 		expectedCalls []string
 	}{
 		{
 			name: "Get_CacheHit",
-			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("Get", TestUser{ID: "cached-1", Name: "Cached User"})
+			setupCache: func(cache *mockCacheService, cached *CachedRepository[TestUser]) {
+				cache.SetCacheValue(cached.key("Get"), TestUser{ID: "cached-1", Name: "Cached User"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {
 				// Should not be called due to cache hit
@@ -410,8 +411,8 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		},
 		{
 			name: "GetByID_CacheHit",
-			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("GetByID:user-1", TestUser{ID: "user-1", Name: "Cached User"})
+			setupCache: func(cache *mockCacheService, cached *CachedRepository[TestUser]) {
+				cache.SetCacheValue(cached.key("GetByID", "user-1"), TestUser{ID: "user-1", Name: "Cached User"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -428,12 +429,12 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		},
 		{
 			name: "List_CacheHit",
-			setupCache: func(cache *mockCacheService) {
+			setupCache: func(cache *mockCacheService, cached *CachedRepository[TestUser]) {
 				result := listResult[TestUser]{
 					Records: []TestUser{{ID: "1", Name: "User 1"}, {ID: "2", Name: "User 2"}},
 					Total:   2,
 				}
-				cache.SetCacheValue("List", result)
+				cache.SetCacheValue(cached.key("List"), result)
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -450,8 +451,8 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		},
 		{
 			name: "Count_CacheHit",
-			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("Count", 42)
+			setupCache: func(cache *mockCacheService, cached *CachedRepository[TestUser]) {
+				cache.SetCacheValue(cached.key("Count"), 42)
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -468,8 +469,8 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 		},
 		{
 			name: "GetByIdentifier_CacheHit",
-			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheValue("GetByIdentifier:username123", TestUser{ID: "user-1", Name: "User by identifier"})
+			setupCache: func(cache *mockCacheService, cached *CachedRepository[TestUser]) {
+				cache.SetCacheValue(cached.key("GetByIdentifier", "username123"), TestUser{ID: "user-1", Name: "User by identifier"})
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -492,10 +493,10 @@ func TestCachedReadMethods_CacheHit(t *testing.T) {
 			cacheService := newMockCacheService()
 			keySerializer := newTrackingKeySerializer()
 
-			tt.setupCache(cacheService)
 			tt.setupRepo(baseRepo)
 
 			cached := New(baseRepo, cacheService, keySerializer)
+			tt.setupCache(cacheService, cached)
 
 			err := tt.testOperation(cached)
 			if err != nil {
@@ -643,14 +644,14 @@ func TestCachedReadMethods_CacheMiss(t *testing.T) {
 func TestCachedReadMethods_ErrorPropagation(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupCache    func(*mockCacheService)
+		setupCache    func(*mockCacheService, *CachedRepository[TestUser])
 		setupRepo     func(*mockRepository[TestUser])
 		testOperation func(*CachedRepository[TestUser]) error
 		expectedError string
 	}{
 		{
 			name:       "Get_RepoError",
-			setupCache: func(cache *mockCacheService) {},
+			setupCache: func(cache *mockCacheService, _ *CachedRepository[TestUser]) {},
 			setupRepo: func(repo *mockRepository[TestUser]) {
 				repo.getError = errors.New("repository error")
 			},
@@ -662,8 +663,8 @@ func TestCachedReadMethods_ErrorPropagation(t *testing.T) {
 		},
 		{
 			name: "Get_CacheError",
-			setupCache: func(cache *mockCacheService) {
-				cache.SetCacheError("Get", errors.New("cache error"))
+			setupCache: func(cache *mockCacheService, cached *CachedRepository[TestUser]) {
+				cache.SetCacheError(cached.key("Get"), errors.New("cache error"))
 			},
 			setupRepo: func(repo *mockRepository[TestUser]) {},
 			testOperation: func(cached *CachedRepository[TestUser]) error {
@@ -674,7 +675,7 @@ func TestCachedReadMethods_ErrorPropagation(t *testing.T) {
 		},
 		{
 			name:       "List_RepoError",
-			setupCache: func(cache *mockCacheService) {},
+			setupCache: func(cache *mockCacheService, _ *CachedRepository[TestUser]) {},
 			setupRepo: func(repo *mockRepository[TestUser]) {
 				repo.listError = errors.New("list repository error")
 			},
@@ -692,10 +693,10 @@ func TestCachedReadMethods_ErrorPropagation(t *testing.T) {
 			cacheService := newMockCacheService()
 			keySerializer := newTrackingKeySerializer()
 
-			tt.setupCache(cacheService)
 			tt.setupRepo(baseRepo)
 
 			cached := New(baseRepo, cacheService, keySerializer)
+			tt.setupCache(cacheService, cached)
 
 			err := tt.testOperation(cached)
 			if err == nil {
@@ -854,11 +855,11 @@ func TestKeySerializerIntegration(t *testing.T) {
 	// Verify key serializer was called
 	calls := keySerializer.getCalls()
 	expectedCalls := []string{
-		"Get:[]",
-		"GetByID:[test-id]",
-		"List:[]",
-		"Count:[]",
-		"GetByIdentifier:[test-identifier]",
+		cached.methodKey("Get") + ":[]",
+		cached.methodKey("GetByID") + ":[test-id]",
+		cached.methodKey("List") + ":[]",
+		cached.methodKey("Count") + ":[]",
+		cached.methodKey("GetByIdentifier") + ":[test-identifier]",
 	}
 
 	if len(calls) != len(expectedCalls) {
@@ -1041,7 +1042,7 @@ func TestCacheInvalidation_Create(t *testing.T) {
 	cacheCalls := cacheService.getCalls()
 	found := false
 	for _, call := range cacheCalls {
-		if strings.HasPrefix(call, "Delete:List") || strings.HasPrefix(call, "Delete:Count") {
+		if strings.Contains(call, cached.methodKey("List")) || strings.Contains(call, cached.methodKey("Count")) {
 			found = true
 			break
 		}
@@ -1133,17 +1134,21 @@ func TestCacheInvalidation_Update(t *testing.T) {
 
 	// Verify cache invalidation was called for relevant prefixes
 	cacheCalls := cacheService.getCalls()
-	expectedPrefixes := []string{"Delete:GetByID:user-1", "Delete:List", "Delete:Count"}
-	for _, expected := range expectedPrefixes {
+	expectedSubstrings := []string{
+		cached.methodPrefix("GetByID", "user-1"),
+		cached.methodKey("List"),
+		cached.methodKey("Count"),
+	}
+	for _, expected := range expectedSubstrings {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.HasPrefix(call, expected) {
+			if strings.Contains(call, expected) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("Expected cache Delete calls matching '%s' after update operation", expected)
+			t.Errorf("Expected cache invalidation containing '%s' after update operation, got calls: %v", expected, cacheCalls)
 		}
 	}
 }
@@ -1220,17 +1225,21 @@ func TestCacheInvalidation_Delete(t *testing.T) {
 
 	// Verify cache invalidation was called for relevant prefixes
 	cacheCalls := cacheService.getCalls()
-	expectedDeleteCalls := []string{"Delete:GetByID:user-1", "Delete:List", "Delete:Count"}
-	for _, expected := range expectedDeleteCalls {
+	expectedDeleteSubstrings := []string{
+		cached.methodPrefix("GetByID", "user-1"),
+		cached.methodKey("List"),
+		cached.methodKey("Count"),
+	}
+	for _, expected := range expectedDeleteSubstrings {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.HasPrefix(call, expected) {
+			if strings.Contains(call, expected) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("Expected cache Delete calls matching '%s' after delete operation", expected)
+			t.Errorf("Expected cache invalidation containing '%s' after delete operation, got calls: %v", expected, cacheCalls)
 		}
 	}
 }
@@ -1301,7 +1310,7 @@ func TestCacheInvalidation_BulkOperations(t *testing.T) {
 	cacheCalls := cacheService.getCalls()
 	found := false
 	for _, call := range cacheCalls {
-		if strings.HasPrefix(call, "Delete:List") || strings.HasPrefix(call, "Delete:Count") {
+		if strings.Contains(call, cached.methodKey("List")) || strings.Contains(call, cached.methodKey("Count")) {
 			found = true
 			break
 		}
@@ -1363,17 +1372,21 @@ func TestCacheInvalidation_CriteriaOperations(t *testing.T) {
 	cacheCalls := cacheService.getCalls()
 	// For criteria operations, we should see Delete calls for prefixes that actually have cached keys
 	// In our test, we only cached GetByID, List, and Count, so only those should have Delete calls
-	expectedDeletePrefixes := []string{"Delete:GetByID", "Delete:List", "Delete:Count"}
-	for _, prefix := range expectedDeletePrefixes {
+	expectedDeleteSubstrings := []string{
+		cached.methodPrefixWithSeparator("GetByID"),
+		cached.methodKey("List"),
+		cached.methodKey("Count"),
+	}
+	for _, substr := range expectedDeleteSubstrings {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.HasPrefix(call, prefix) {
+			if strings.Contains(call, substr) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("Expected cache Delete calls for prefix '%s' after DeleteMany operation", prefix)
+			t.Errorf("Expected cache invalidation containing '%s' after DeleteMany operation, got calls: %v", substr, cacheCalls)
 		}
 	}
 
@@ -1496,7 +1509,7 @@ func TestCacheInvalidation_Concurrent(t *testing.T) {
 	cacheCalls := cacheService.getCalls()
 	deleteCount := 0
 	for _, call := range cacheCalls {
-		if strings.HasPrefix(call, "Delete:List") || strings.HasPrefix(call, "Delete:Count") {
+		if strings.Contains(call, cached.methodKey("List")) || strings.Contains(call, cached.methodKey("Count")) {
 			deleteCount++
 		}
 	}
