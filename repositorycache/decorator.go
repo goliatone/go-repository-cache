@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
 
 	repository "github.com/goliatone/go-repository-bun"
 	"github.com/goliatone/go-repository-cache/cache"
+	"github.com/iancoleman/strcase"
 	"github.com/uptrace/bun"
 )
 
@@ -26,7 +26,7 @@ type CachedRepository[T any] struct {
 	base          repository.Repository[T]
 	cache         cache.CacheService
 	keySerializer cache.KeySerializer
-	keyRegistry   *sync.Map // Track active cache keys for invalidation
+	namespace     string
 }
 
 func toAnySlice[T any](items []T) []any {
@@ -46,14 +46,74 @@ func New[T any](base repository.Repository[T], cacheService cache.CacheService, 
 		base:          base,
 		cache:         cacheService,
 		keySerializer: keySerializer,
-		keyRegistry:   &sync.Map{},
+		namespace:     deriveNamespace(base),
 	}
+}
+
+func deriveNamespace[T any](_ repository.Repository[T]) string {
+	var sample T
+	typ := reflect.TypeOf(sample)
+	if typ == nil {
+		var ptr *T
+		typ = reflect.TypeOf(ptr)
+	}
+	if typ == nil {
+		return "unknown"
+	}
+
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	name := typ.Name()
+	if name == "" {
+		name = typ.String()
+		if idx := strings.LastIndex(name, "."); idx != -1 {
+			name = name[idx+1:]
+		}
+	}
+
+	return strcase.ToSnake(name)
+}
+
+func (c *CachedRepository[T]) key(method string, args ...any) string {
+	methodKey := c.methodKey(method)
+	return c.keySerializer.SerializeKey(methodKey, args...)
+}
+
+func (c *CachedRepository[T]) methodKey(method string) string {
+	return strings.Join([]string{c.namespace, strcase.ToSnake(method)}, cache.KeySeparator)
+}
+
+func (c *CachedRepository[T]) methodPrefix(method string, segments ...string) string {
+	prefix := c.methodKey(method)
+	if len(segments) == 0 {
+		return prefix
+	}
+	return prefix + cache.KeySeparator + strings.Join(segments, cache.KeySeparator)
+}
+
+func (c *CachedRepository[T]) methodPrefixWithSeparator(method string) string {
+	return c.methodKey(method) + cache.KeySeparator
+}
+
+func (c *CachedRepository[T]) deleteKey(ctx context.Context, method string, args ...any) {
+	key := c.key(method, args...)
+	_ = c.cache.Delete(ctx, key)
+}
+
+func (c *CachedRepository[T]) deleteByPrefix(ctx context.Context, prefix string) {
+	_ = c.cache.DeleteByPrefix(ctx, prefix)
+}
+
+func (c *CachedRepository[T]) invalidateGetCaches(ctx context.Context) {
+	c.deleteKey(ctx, "Get")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Get"))
 }
 
 // Get retrieves a single record using the provided criteria, with caching
 func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.SelectCriteria) (T, error) {
-	key := c.keySerializer.SerializeKey("Get", toAnySlice(criteria)...)
-	c.trackKey(key)
+	key := c.key("Get", toAnySlice(criteria)...)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.Get(ctx, criteria...)
 	})
@@ -62,8 +122,7 @@ func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.Se
 // GetByID retrieves a record by ID with optional criteria, with caching
 func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria ...repository.SelectCriteria) (T, error) {
 	args := append([]any{id}, toAnySlice(criteria)...)
-	key := c.keySerializer.SerializeKey("GetByID", args...)
-	c.trackKey(key)
+	key := c.key("GetByID", args...)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.GetByID(ctx, id, criteria...)
 	})
@@ -71,8 +130,7 @@ func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria .
 
 // List retrieves multiple records using the provided criteria, with caching
 func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.SelectCriteria) ([]T, int, error) {
-	key := c.keySerializer.SerializeKey("List", toAnySlice(criteria)...)
-	c.trackKey(key)
+	key := c.key("List", toAnySlice(criteria)...)
 	res, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (listResult[T], error) {
 		records, total, err := c.base.List(ctx, criteria...)
 		return listResult[T]{Records: records, Total: total}, err
@@ -85,8 +143,7 @@ func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.S
 
 // Count returns the number of records matching the criteria, with caching
 func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.SelectCriteria) (int, error) {
-	key := c.keySerializer.SerializeKey("Count", toAnySlice(criteria)...)
-	c.trackKey(key)
+	key := c.key("Count", toAnySlice(criteria)...)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (int, error) {
 		return c.base.Count(ctx, criteria...)
 	})
@@ -95,8 +152,7 @@ func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.
 // GetByIdentifier retrieves a record by identifier with optional criteria, with caching
 func (c *CachedRepository[T]) GetByIdentifier(ctx context.Context, identifier string, criteria ...repository.SelectCriteria) (T, error) {
 	args := append([]any{identifier}, toAnySlice(criteria)...)
-	key := c.keySerializer.SerializeKey("GetByIdentifier", args...)
-	c.trackKey(key)
+	key := c.key("GetByIdentifier", args...)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.GetByIdentifier(ctx, identifier, criteria...)
 	})
@@ -142,7 +198,7 @@ func (c *CachedRepository[T]) CreateManyTx(ctx context.Context, tx bun.IDB, reco
 func (c *CachedRepository[T]) GetOrCreate(ctx context.Context, record T) (T, error) {
 	result, err := c.base.GetOrCreate(ctx, record)
 	if err == nil {
-		// GetOrCreate may have created a new record, so invalidate create-related caches
+		// GetOrCreate may have created a new record, so invalidate create related caches
 		c.invalidateAfterCreate(ctx)
 	}
 	return result, err
@@ -344,31 +400,6 @@ func (c *CachedRepository[T]) Handlers() repository.ModelHandlers[T] {
 	return c.base.Handlers()
 }
 
-// trackKey registers a cache key in the key registry for later invalidation
-func (c *CachedRepository[T]) trackKey(key string) {
-	c.keyRegistry.Store(key, struct{}{})
-}
-
-// invalidateByPrefix removes all cached keys that start with the given prefix
-func (c *CachedRepository[T]) invalidateByPrefix(ctx context.Context, prefix string) error {
-	var keysToDelete []string
-	c.keyRegistry.Range(func(k, v any) bool {
-		if key, ok := k.(string); ok && strings.HasPrefix(key, prefix) {
-			keysToDelete = append(keysToDelete, key)
-		}
-		return true
-	})
-
-	for _, key := range keysToDelete {
-		if err := c.cache.Delete(ctx, key); err != nil {
-			// Log error but continue with other deletions
-			// In a real implementation, you might want to use a proper logger
-		}
-		c.keyRegistry.Delete(key)
-	}
-	return nil
-}
-
 // extractID attempts to extract an ID field from a record using reflection
 func (c *CachedRepository[T]) extractID(record T) (string, error) {
 	v := reflect.ValueOf(record)
@@ -406,10 +437,11 @@ func (c *CachedRepository[T]) extractIdentifier(record T) (string, error) {
 // invalidateAfterCreate invalidates query result caches after create operations
 func (c *CachedRepository[T]) invalidateAfterCreate(ctx context.Context) error {
 	// Invalidate all List and Count caches since new records affect pagination and totals
-	if err := c.invalidateByPrefix(ctx, "List"); err != nil {
-		return err
-	}
-	return c.invalidateByPrefix(ctx, "Count")
+	c.deleteKey(ctx, "List")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("List"))
+	c.deleteKey(ctx, "Count")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Count"))
+	return nil
 }
 
 // invalidateAfterUpdate invalidates all relevant caches after update operations
@@ -417,19 +449,21 @@ func (c *CachedRepository[T]) invalidateAfterUpdate(ctx context.Context, record 
 	// Try to invalidate specific ID-based cache
 	if id, err := c.extractID(record); err == nil {
 		// Invalidate all GetByID variations for this ID
-		c.invalidateByPrefix(ctx, fmt.Sprintf("GetByID:%s", id))
+		c.deleteByPrefix(ctx, c.methodPrefix("GetByID", id))
 	}
 
 	// Try to invalidate specific identifier-based cache
 	if identifier, err := c.extractIdentifier(record); err == nil {
 		// Invalidate all GetByIdentifier variations for this identifier
-		c.invalidateByPrefix(ctx, fmt.Sprintf("GetByIdentifier:%s", identifier))
+		c.deleteByPrefix(ctx, c.methodPrefix("GetByIdentifier", identifier))
 	}
 
 	// Invalidate all query result caches (List/Count/Get with criteria)
-	c.invalidateByPrefix(ctx, "List")
-	c.invalidateByPrefix(ctx, "Count")
-	c.invalidateByPrefix(ctx, "Get")
+	c.deleteKey(ctx, "List")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("List"))
+	c.deleteKey(ctx, "Count")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Count"))
+	c.invalidateGetCaches(ctx)
 
 	return nil
 }
@@ -450,16 +484,6 @@ func (c *CachedRepository[T]) invalidateAfterBulkUpdate(ctx context.Context, rec
 	return nil
 }
 
-// invalidateAfterBulkDelete invalidates caches after bulk delete operations
-func (c *CachedRepository[T]) invalidateAfterBulkDelete(ctx context.Context, records []T) error {
-	for _, record := range records {
-		if err := c.invalidateAfterDelete(ctx, record); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // invalidateAfterBulkCreate invalidates caches after bulk create operations
 func (c *CachedRepository[T]) invalidateAfterBulkCreate(ctx context.Context) error {
 	// Bulk creates affect the same caches as single creates (List and Count)
@@ -470,10 +494,12 @@ func (c *CachedRepository[T]) invalidateAfterBulkCreate(ctx context.Context) err
 func (c *CachedRepository[T]) invalidateAfterCriteriaOperation(ctx context.Context) error {
 	// For operations like DeleteMany where we don't have the actual records,
 	// we must invalidate all relevant caches since we can't target specific keys
-	c.invalidateByPrefix(ctx, "GetByID")
-	c.invalidateByPrefix(ctx, "GetByIdentifier")
-	c.invalidateByPrefix(ctx, "List")
-	c.invalidateByPrefix(ctx, "Count")
-	c.invalidateByPrefix(ctx, "Get")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("GetByID"))
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("GetByIdentifier"))
+	c.deleteKey(ctx, "List")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("List"))
+	c.deleteKey(ctx, "Count")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Count"))
+	c.invalidateGetCaches(ctx)
 	return nil
 }
