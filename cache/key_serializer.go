@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// KeySeparator defines the delimiter used between cache key segments.
+const KeySeparator = "::"
+
 // defaultKeySerializer implements KeySerializer using reflection-based serialization.
 // It handles function pointers using %p formatting, recursive slices, and falls back to JSON
 // for complex types while ensuring deterministic key generation across runs.
@@ -33,7 +36,7 @@ func (s *defaultKeySerializer) SerializeKey(method string, args ...any) string {
 		parts = append(parts, serialized)
 	}
 
-	return strings.Join(parts, ":")
+	return strings.Join(parts, KeySeparator)
 }
 
 // serializeValue handles individual argument serialization based on type.
