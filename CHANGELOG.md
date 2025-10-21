@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.4.0](https://github.com/goliatone/go-auth/compare/v0.3.0...v0.4.0) - (2025-10-21)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.4.0 ([ce06313](https://github.com/goliatone/go-auth/commit/ce06313c68d4e9f57ab971d592d6783c36a3d5c1))  - (goliatone)
+
+## <!-- 2 -->🚜 Refactor
+
+- Remove hardcoded identifiers ([41b0eb5](https://github.com/goliatone/go-auth/commit/41b0eb5141768e58ab10b590e72cff47b4a16139))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.3.0 ([032df6e](https://github.com/goliatone/go-auth/commit/032df6ef53f6626fe57e3bded557846f85ee693c))  - (goliatone)
+
 # [0.3.0](https://github.com/goliatone/go-auth/compare/v0.2.0...v0.3.0) - (2025-10-21)
 
 ## <!-- 1 -->🐛 Bug Fixes
