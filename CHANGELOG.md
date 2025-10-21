@@ -1,5 +1,29 @@
 # Changelog
 
+# [0.2.0](https://github.com/goliatone/go-auth/compare/v0.1.0...v0.2.0) - (2025-10-21)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Manage keys using store to work on distributed systems ([578026a](https://github.com/goliatone/go-auth/commit/578026acf1c6ceb2c7787968ed77d18b15fcb225))  - (goliatone)
+- Use const for glue ([697db1b](https://github.com/goliatone/go-auth/commit/697db1b96c21a0cd1b9c4ae8f9374d1947ac57fd))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.2.0 ([247cd48](https://github.com/goliatone/go-auth/commit/247cd483e6035c594785fa2180814007b857b0e0))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- ToSnakeCase helper function ([d1353a5](https://github.com/goliatone/go-auth/commit/d1353a566f858d31b53992e7f56941c3a5097ff2))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.1.0 ([a391dcd](https://github.com/goliatone/go-auth/commit/a391dcd06fd6f9e68544f988690a11ba6d3923d0))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update deps ([c78ec34](https://github.com/goliatone/go-auth/commit/c78ec3486f9aebecc1d54414ceb28002052747a1))  - (goliatone)
+- Update tests ([1e47c8c](https://github.com/goliatone/go-auth/commit/1e47c8c703a78607df546dec2bedeadb44864e77))  - (goliatone)
+
 # [0.1.0](https://github.com/goliatone/go-auth/tree/v0.1.0) - (2025-09-26)
 
 ## <!-- 1 -->🐛 Bug Fixes
