@@ -26,6 +26,7 @@ type CachedRepository[T any] struct {
 	cache         cache.CacheService
 	keySerializer cache.KeySerializer
 	namespace     string
+	identifiers   []string
 }
 
 func toAnySlice[T any](items []T) []any {
@@ -41,73 +42,13 @@ func toAnySlice[T any](items []T) []any {
 
 // New creates a new CachedRepository that wraps the base repository with caching
 func New[T any](base repository.Repository[T], cacheService cache.CacheService, keySerializer cache.KeySerializer) *CachedRepository[T] {
-	return &CachedRepository[T]{
-		base:          base,
-		cache:         cacheService,
-		keySerializer: keySerializer,
-		namespace:     deriveNamespace(base),
-	}
+	return newCachedRepository(base, cacheService, keySerializer, nil)
 }
 
-func deriveNamespace[T any](_ repository.Repository[T]) string {
-	var sample T
-	typ := reflect.TypeOf(sample)
-	if typ == nil {
-		var ptr *T
-		typ = reflect.TypeOf(ptr)
-	}
-	if typ == nil {
-		return "unknown"
-	}
-
-	for typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-
-	name := typ.Name()
-	if name == "" {
-		name = typ.String()
-		if idx := strings.LastIndex(name, "."); idx != -1 {
-			name = name[idx+1:]
-		}
-	}
-
-	return toSnake(name)
-}
-
-func (c *CachedRepository[T]) key(method string, args ...any) string {
-	methodKey := c.methodKey(method)
-	return c.keySerializer.SerializeKey(methodKey, args...)
-}
-
-func (c *CachedRepository[T]) methodKey(method string) string {
-	return strings.Join([]string{c.namespace, toSnake(method)}, cache.KeySeparator)
-}
-
-func (c *CachedRepository[T]) methodPrefix(method string, segments ...string) string {
-	prefix := c.methodKey(method)
-	if len(segments) == 0 {
-		return prefix
-	}
-	return prefix + cache.KeySeparator + strings.Join(segments, cache.KeySeparator)
-}
-
-func (c *CachedRepository[T]) methodPrefixWithSeparator(method string) string {
-	return c.methodKey(method) + cache.KeySeparator
-}
-
-func (c *CachedRepository[T]) deleteKey(ctx context.Context, method string, args ...any) {
-	key := c.key(method, args...)
-	_ = c.cache.Delete(ctx, key)
-}
-
-func (c *CachedRepository[T]) deleteByPrefix(ctx context.Context, prefix string) {
-	_ = c.cache.DeleteByPrefix(ctx, prefix)
-}
-
-func (c *CachedRepository[T]) invalidateGetCaches(ctx context.Context) {
-	c.deleteKey(ctx, "Get")
-	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Get"))
+// NewWithIdentifierFields creates a CachedRepository with custom identifier field names.
+// Field names must match the struct field names returned by the repository handlers.
+func NewWithIdentifierFields[T any](base repository.Repository[T], cacheService cache.CacheService, keySerializer cache.KeySerializer, identifierFields ...string) *CachedRepository[T] {
+	return newCachedRepository(base, cacheService, keySerializer, identifierFields)
 }
 
 // Get retrieves a single record using the provided criteria, with caching
@@ -401,27 +342,9 @@ func (c *CachedRepository[T]) Handlers() repository.ModelHandlers[T] {
 
 // extractID attempts to extract an ID field from a record using reflection
 func (c *CachedRepository[T]) extractID(record T) (string, error) {
-	v := reflect.ValueOf(record)
-	if !v.IsValid() {
-		return "", fmt.Errorf("record is invalid")
-	}
-
-	for v.Kind() == reflect.Interface {
-		if v.IsNil() {
-			return "", fmt.Errorf("record interface is nil")
-		}
-		v = v.Elem()
-	}
-
-	for v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return "", fmt.Errorf("record pointer is nil")
-		}
-		v = v.Elem()
-	}
-
-	if v.Kind() != reflect.Struct {
-		return "", fmt.Errorf("record type %s is not a struct", v.Kind())
+	v, err := structValue(record)
+	if err != nil {
+		return "", err
 	}
 
 	// Look for common ID field names
@@ -435,38 +358,32 @@ func (c *CachedRepository[T]) extractID(record T) (string, error) {
 }
 
 // extractIdentifier attempts to extract an identifier field from a record using reflection
-func (c *CachedRepository[T]) extractIdentifier(record T) (string, error) {
-	v := reflect.ValueOf(record)
-	if !v.IsValid() {
-		return "", fmt.Errorf("record is invalid")
+func (c *CachedRepository[T]) extractIdentifierValues(record T) ([]string, error) {
+	if len(c.identifiers) == 0 {
+		return nil, fmt.Errorf("no identifier fields configured")
 	}
 
-	for v.Kind() == reflect.Interface {
-		if v.IsNil() {
-			return "", fmt.Errorf("record interface is nil")
-		}
-		v = v.Elem()
+	v, err := structValue(record)
+	if err != nil {
+		return nil, err
 	}
 
-	for v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return "", fmt.Errorf("record pointer is nil")
-		}
-		v = v.Elem()
-	}
-
-	if v.Kind() != reflect.Struct {
-		return "", fmt.Errorf("record type %s is not a struct", v.Kind())
-	}
-
-	// Look for common identifier field names
-	for _, fieldName := range []string{"Identifier", "identifier", "Name", "name", "Code", "code"} {
+	values := make([]string, 0, len(c.identifiers))
+	for _, fieldName := range c.identifiers {
 		field := v.FieldByName(fieldName)
-		if field.IsValid() && field.CanInterface() {
-			return fmt.Sprintf("%v", field.Interface()), nil
+		if !field.IsValid() || !field.CanInterface() {
+			continue
+		}
+		if val, ok := valueToString(field); ok {
+			values = append(values, val)
 		}
 	}
-	return "", fmt.Errorf("no identifier field found in record")
+
+	if len(values) == 0 {
+		return nil, fmt.Errorf("no identifier values found")
+	}
+
+	return values, nil
 }
 
 func (c *CachedRepository[T]) invalidateRecordCaches(ctx context.Context, record T) {
@@ -474,8 +391,15 @@ func (c *CachedRepository[T]) invalidateRecordCaches(ctx context.Context, record
 		c.deleteByPrefix(ctx, c.methodPrefix("GetByID", id))
 	}
 
-	if identifier, err := c.extractIdentifier(record); err == nil && identifier != "" {
-		c.deleteByPrefix(ctx, c.methodPrefix("GetByIdentifier", identifier))
+	if identifiers, err := c.extractIdentifierValues(record); err == nil {
+		for _, identifier := range identifiers {
+			if identifier == "" {
+				continue
+			}
+			c.deleteByPrefix(ctx, c.methodPrefix("GetByIdentifier", identifier))
+		}
+	} else {
+		c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("GetByIdentifier"))
 	}
 }
 
@@ -541,4 +465,200 @@ func (c *CachedRepository[T]) invalidateAfterCriteriaOperation(ctx context.Conte
 	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Count"))
 	c.invalidateGetCaches(ctx)
 	return nil
+}
+
+func structValue(record any) (reflect.Value, error) {
+	v := reflect.ValueOf(record)
+	if !v.IsValid() {
+		return reflect.Value{}, fmt.Errorf("record is invalid")
+	}
+
+	for v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return reflect.Value{}, fmt.Errorf("record interface is nil")
+		}
+		v = v.Elem()
+	}
+
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return reflect.Value{}, fmt.Errorf("record pointer is nil")
+		}
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("record type %s is not a struct", v.Kind())
+	}
+
+	return v, nil
+}
+
+func valueToString(v reflect.Value) (string, bool) {
+	value := v
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return "", false
+		}
+		value = value.Elem()
+	}
+
+	if !value.CanInterface() {
+		return "", false
+	}
+
+	interf := value.Interface()
+	switch val := interf.(type) {
+	case fmt.Stringer:
+		return val.String(), true
+	case string:
+		if val == "" {
+			return "", false
+		}
+		return val, true
+	default:
+		str := fmt.Sprintf("%v", interf)
+		if str == "" || str == "<nil>" {
+			return "", false
+		}
+		return str, true
+	}
+}
+
+func newCachedRepository[T any](base repository.Repository[T], cache cache.CacheService, serializer cache.KeySerializer, identifierFields []string) *CachedRepository[T] {
+	repo := &CachedRepository[T]{
+		base:          base,
+		cache:         cache,
+		keySerializer: serializer,
+		namespace:     deriveNamespace(base),
+	}
+	repo.identifiers = repo.resolveIdentifierFields(identifierFields)
+	return repo
+}
+
+func deriveNamespace[T any](_ repository.Repository[T]) string {
+	var sample T
+	typ := reflect.TypeOf(sample)
+	if typ == nil {
+		var ptr *T
+		typ = reflect.TypeOf(ptr)
+	}
+	if typ == nil {
+		return "unknown"
+	}
+
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	name := typ.Name()
+	if name == "" {
+		name = typ.String()
+		if idx := strings.LastIndex(name, "."); idx != -1 {
+			name = name[idx+1:]
+		}
+	}
+
+	return toSnake(name)
+}
+
+func (c *CachedRepository[T]) resolveIdentifierFields(explicit []string) []string {
+	if len(explicit) > 0 {
+		return dedupeStrings(explicit)
+	}
+	derived := deriveIdentifierFields(c.base)
+	return dedupeStrings(derived)
+}
+
+func dedupeStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		result = append(result, v)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func deriveIdentifierFields[T any](base repository.Repository[T]) []string {
+	handlers, ok := safeHandlers(base)
+	if !ok || handlers.NewRecord == nil {
+		return nil
+	}
+
+	record := handlers.NewRecord()
+	meta := repository.GenerateModelMeta(record)
+
+	var fields []string
+	for _, field := range meta.Fields {
+		if field.IsUnique {
+			fields = append(fields, field.StructName)
+		}
+	}
+
+	return fields
+}
+
+func safeHandlers[T any](base repository.Repository[T]) (repository.ModelHandlers[T], bool) {
+	var (
+		h  repository.ModelHandlers[T]
+		ok bool
+	)
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ok = false
+			}
+		}()
+		h = base.Handlers()
+		ok = true
+	}()
+	return h, ok
+}
+
+func (c *CachedRepository[T]) key(method string, args ...any) string {
+	methodKey := c.methodKey(method)
+	return c.keySerializer.SerializeKey(methodKey, args...)
+}
+
+func (c *CachedRepository[T]) methodKey(method string) string {
+	return strings.Join([]string{c.namespace, toSnake(method)}, cache.KeySeparator)
+}
+
+func (c *CachedRepository[T]) methodPrefix(method string, segments ...string) string {
+	prefix := c.methodKey(method)
+	if len(segments) == 0 {
+		return prefix
+	}
+	return prefix + cache.KeySeparator + strings.Join(segments, cache.KeySeparator)
+}
+
+func (c *CachedRepository[T]) methodPrefixWithSeparator(method string) string {
+	return c.methodKey(method) + cache.KeySeparator
+}
+
+func (c *CachedRepository[T]) deleteKey(ctx context.Context, method string, args ...any) {
+	key := c.key(method, args...)
+	_ = c.cache.Delete(ctx, key)
+}
+
+func (c *CachedRepository[T]) deleteByPrefix(ctx context.Context, prefix string) {
+	_ = c.cache.DeleteByPrefix(ctx, prefix)
+}
+
+func (c *CachedRepository[T]) invalidateGetCaches(ctx context.Context) {
+	c.deleteKey(ctx, "Get")
+	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Get"))
 }
