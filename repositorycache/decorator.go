@@ -161,7 +161,7 @@ func (c *CachedRepository[T]) GetByIdentifier(ctx context.Context, identifier st
 func (c *CachedRepository[T]) Create(ctx context.Context, record T, criteria ...repository.InsertCriteria) (T, error) {
 	result, err := c.base.Create(ctx, record, criteria...)
 	if err == nil {
-		c.invalidateAfterCreate(ctx)
+		c.invalidateAfterCreate(ctx, result)
 	}
 	return result, err
 }
@@ -170,7 +170,7 @@ func (c *CachedRepository[T]) Create(ctx context.Context, record T, criteria ...
 func (c *CachedRepository[T]) CreateTx(ctx context.Context, tx bun.IDB, record T, criteria ...repository.InsertCriteria) (T, error) {
 	result, err := c.base.CreateTx(ctx, tx, record, criteria...)
 	if err == nil {
-		c.invalidateAfterCreate(ctx)
+		c.invalidateAfterCreate(ctx, result)
 	}
 	return result, err
 }
@@ -179,7 +179,7 @@ func (c *CachedRepository[T]) CreateTx(ctx context.Context, tx bun.IDB, record T
 func (c *CachedRepository[T]) CreateMany(ctx context.Context, records []T, criteria ...repository.InsertCriteria) ([]T, error) {
 	result, err := c.base.CreateMany(ctx, records, criteria...)
 	if err == nil {
-		c.invalidateAfterBulkCreate(ctx)
+		c.invalidateAfterBulkCreate(ctx, result)
 	}
 	return result, err
 }
@@ -188,7 +188,7 @@ func (c *CachedRepository[T]) CreateMany(ctx context.Context, records []T, crite
 func (c *CachedRepository[T]) CreateManyTx(ctx context.Context, tx bun.IDB, records []T, criteria ...repository.InsertCriteria) ([]T, error) {
 	result, err := c.base.CreateManyTx(ctx, tx, records, criteria...)
 	if err == nil {
-		c.invalidateAfterBulkCreate(ctx)
+		c.invalidateAfterBulkCreate(ctx, result)
 	}
 	return result, err
 }
@@ -198,7 +198,7 @@ func (c *CachedRepository[T]) GetOrCreate(ctx context.Context, record T) (T, err
 	result, err := c.base.GetOrCreate(ctx, record)
 	if err == nil {
 		// GetOrCreate may have created a new record, so invalidate create related caches
-		c.invalidateAfterCreate(ctx)
+		c.invalidateAfterCreate(ctx, result)
 	}
 	return result, err
 }
@@ -207,7 +207,7 @@ func (c *CachedRepository[T]) GetOrCreate(ctx context.Context, record T) (T, err
 func (c *CachedRepository[T]) GetOrCreateTx(ctx context.Context, tx bun.IDB, record T) (T, error) {
 	result, err := c.base.GetOrCreateTx(ctx, tx, record)
 	if err == nil {
-		c.invalidateAfterCreate(ctx)
+		c.invalidateAfterCreate(ctx, result)
 	}
 	return result, err
 }
@@ -402,8 +402,26 @@ func (c *CachedRepository[T]) Handlers() repository.ModelHandlers[T] {
 // extractID attempts to extract an ID field from a record using reflection
 func (c *CachedRepository[T]) extractID(record T) (string, error) {
 	v := reflect.ValueOf(record)
-	if v.Kind() == reflect.Ptr {
+	if !v.IsValid() {
+		return "", fmt.Errorf("record is invalid")
+	}
+
+	for v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return "", fmt.Errorf("record interface is nil")
+		}
 		v = v.Elem()
+	}
+
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return "", fmt.Errorf("record pointer is nil")
+		}
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Struct {
+		return "", fmt.Errorf("record type %s is not a struct", v.Kind())
 	}
 
 	// Look for common ID field names
@@ -419,8 +437,26 @@ func (c *CachedRepository[T]) extractID(record T) (string, error) {
 // extractIdentifier attempts to extract an identifier field from a record using reflection
 func (c *CachedRepository[T]) extractIdentifier(record T) (string, error) {
 	v := reflect.ValueOf(record)
-	if v.Kind() == reflect.Ptr {
+	if !v.IsValid() {
+		return "", fmt.Errorf("record is invalid")
+	}
+
+	for v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return "", fmt.Errorf("record interface is nil")
+		}
 		v = v.Elem()
+	}
+
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return "", fmt.Errorf("record pointer is nil")
+		}
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Struct {
+		return "", fmt.Errorf("record type %s is not a struct", v.Kind())
 	}
 
 	// Look for common identifier field names
@@ -433,36 +469,41 @@ func (c *CachedRepository[T]) extractIdentifier(record T) (string, error) {
 	return "", fmt.Errorf("no identifier field found in record")
 }
 
-// invalidateAfterCreate invalidates query result caches after create operations
-func (c *CachedRepository[T]) invalidateAfterCreate(ctx context.Context) error {
-	// Invalidate all List and Count caches since new records affect pagination and totals
+func (c *CachedRepository[T]) invalidateRecordCaches(ctx context.Context, record T) {
+	if id, err := c.extractID(record); err == nil && id != "" {
+		c.deleteByPrefix(ctx, c.methodPrefix("GetByID", id))
+	}
+
+	if identifier, err := c.extractIdentifier(record); err == nil && identifier != "" {
+		c.deleteByPrefix(ctx, c.methodPrefix("GetByIdentifier", identifier))
+	}
+}
+
+// invalidateAfterCreate invalidates caches after create operations
+func (c *CachedRepository[T]) invalidateAfterCreate(ctx context.Context, records ...T) error {
+	for _, record := range records {
+		c.invalidateRecordCaches(ctx, record)
+	}
+
+	c.invalidateGetCaches(ctx)
 	c.deleteKey(ctx, "List")
 	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("List"))
 	c.deleteKey(ctx, "Count")
 	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Count"))
+
 	return nil
 }
 
 // invalidateAfterUpdate invalidates all relevant caches after update operations
 func (c *CachedRepository[T]) invalidateAfterUpdate(ctx context.Context, record T) error {
-	// Try to invalidate specific ID-based cache
-	if id, err := c.extractID(record); err == nil {
-		// Invalidate all GetByID variations for this ID
-		c.deleteByPrefix(ctx, c.methodPrefix("GetByID", id))
-	}
-
-	// Try to invalidate specific identifier-based cache
-	if identifier, err := c.extractIdentifier(record); err == nil {
-		// Invalidate all GetByIdentifier variations for this identifier
-		c.deleteByPrefix(ctx, c.methodPrefix("GetByIdentifier", identifier))
-	}
+	c.invalidateRecordCaches(ctx, record)
 
 	// Invalidate all query result caches (List/Count/Get with criteria)
+	c.invalidateGetCaches(ctx)
 	c.deleteKey(ctx, "List")
 	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("List"))
 	c.deleteKey(ctx, "Count")
 	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Count"))
-	c.invalidateGetCaches(ctx)
 
 	return nil
 }
@@ -484,9 +525,8 @@ func (c *CachedRepository[T]) invalidateAfterBulkUpdate(ctx context.Context, rec
 }
 
 // invalidateAfterBulkCreate invalidates caches after bulk create operations
-func (c *CachedRepository[T]) invalidateAfterBulkCreate(ctx context.Context) error {
-	// Bulk creates affect the same caches as single creates (List and Count)
-	return c.invalidateAfterCreate(ctx)
+func (c *CachedRepository[T]) invalidateAfterBulkCreate(ctx context.Context, records []T) error {
+	return c.invalidateAfterCreate(ctx, records...)
 }
 
 // invalidateAfterCriteriaOperation invalidates caches after operations that use criteria instead of records
