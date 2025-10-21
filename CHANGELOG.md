@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.3.0](https://github.com/goliatone/go-auth/compare/v0.2.0...v0.3.0) - (2025-10-21)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Create/insert invalidate reords, added invalidateRecordCaches ([af6389a](https://github.com/goliatone/go-auth/commit/af6389a59b9fb0e1ada8ea8ec5a5bc319077fb2d))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.3.0 ([90b2f5f](https://github.com/goliatone/go-auth/commit/90b2f5f5abb056834926883b480e0f1f96af665a))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.2.0 ([bcaa891](https://github.com/goliatone/go-auth/commit/bcaa891b012ce56115a8d6fb737eb910e7811194))  - (goliatone)
+
 # [0.2.0](https://github.com/goliatone/go-auth/compare/v0.1.0...v0.2.0) - (2025-10-21)
 
 ## <!-- 1 -->🐛 Bug Fixes
