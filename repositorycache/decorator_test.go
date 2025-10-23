@@ -40,6 +40,7 @@ type mockRepository[T any] struct {
 	updateResult   T
 	updateError    error
 	deleteError    error
+	scopeDefaults  repository.ScopeDefaults
 }
 
 // Helper method to record method calls
@@ -103,6 +104,19 @@ func (m *mockRepository[T]) Update(ctx context.Context, record T, criteria ...re
 func (m *mockRepository[T]) Delete(ctx context.Context, record T) error {
 	m.recordCall("Delete")
 	return m.deleteError
+}
+
+func (m *mockRepository[T]) RegisterScope(name string, scope repository.ScopeDefinition) {
+	m.recordCall("RegisterScope")
+}
+
+func (m *mockRepository[T]) SetScopeDefaults(defaults repository.ScopeDefaults) {
+	m.recordCall("SetScopeDefaults")
+	m.scopeDefaults = repository.CloneScopeDefaults(defaults)
+}
+
+func (m *mockRepository[T]) GetScopeDefaults() repository.ScopeDefaults {
+	return repository.CloneScopeDefaults(m.scopeDefaults)
 }
 
 // Other methods that panic to ensure they're not called during our tests
@@ -637,6 +651,85 @@ func TestCachedReadMethods_CacheMiss(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCachedRepository_ScopeAwareKeys(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := cache.NewDefaultKeySerializer()
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	ctxTenantA := repository.WithSelectScopes(context.Background(), "tenant")
+	ctxTenantA = repository.WithScopeData(ctxTenantA, "tenant", "tenant-a")
+
+	signatureA := cached.scopeSignature(ctxTenantA, repository.ScopeOperationSelect)
+	if signatureA.IsZero() {
+		t.Fatalf("expected scope signature for tenant A to be non-zero")
+	}
+
+	keyA := cached.key("Get", signatureA)
+
+	baseRepo.getResult = TestUser{ID: "tenant-a", Name: "Tenant A"}
+	userA, err := cached.Get(ctxTenantA)
+	if err != nil {
+		t.Fatalf("unexpected error fetching tenant A: %v", err)
+	}
+	if userA.ID != "tenant-a" {
+		t.Fatalf("expected tenant-a record, got %s", userA.ID)
+	}
+
+	cacheService.mu.Lock()
+	_, ok := cacheService.storage[keyA]
+	cacheService.mu.Unlock()
+	if !ok {
+		t.Fatalf("expected cache entry for tenant A key %s", keyA)
+	}
+
+	ctxTenantB := repository.WithSelectScopes(context.Background(), "tenant")
+	ctxTenantB = repository.WithScopeData(ctxTenantB, "tenant", "tenant-b")
+	signatureB := cached.scopeSignature(ctxTenantB, repository.ScopeOperationSelect)
+	if signatureB.IsZero() {
+		t.Fatalf("expected scope signature for tenant B to be non-zero")
+	}
+
+	keyB := cached.key("Get", signatureB)
+	if keyA == keyB {
+		t.Fatalf("expected different cache keys for different tenant scopes, got %s", keyA)
+	}
+
+	baseRepo.getResult = TestUser{ID: "tenant-b", Name: "Tenant B"}
+	userB, err := cached.Get(ctxTenantB)
+	if err != nil {
+		t.Fatalf("unexpected error fetching tenant B: %v", err)
+	}
+	if userB.ID != "tenant-b" {
+		t.Fatalf("expected tenant-b record, got %s", userB.ID)
+	}
+
+	cacheService.mu.Lock()
+	_, ok = cacheService.storage[keyB]
+	cacheService.mu.Unlock()
+	if !ok {
+		t.Fatalf("expected cache entry for tenant B key %s", keyB)
+	}
+
+	calls := baseRepo.getCalls()
+	if len(calls) != 2 {
+		t.Fatalf("expected base repository Get to be called twice, got %d calls: %v", len(calls), calls)
+	}
+
+	baseRepo.clearCalls()
+
+	// Subsequent access for tenant A should hit cache
+	_, err = cached.Get(ctxTenantA)
+	if err != nil {
+		t.Fatalf("unexpected error retrieving cached tenant A: %v", err)
+	}
+
+	if calls := baseRepo.getCalls(); len(calls) != 0 {
+		t.Fatalf("expected no additional base repo calls, got %v", calls)
 	}
 }
 

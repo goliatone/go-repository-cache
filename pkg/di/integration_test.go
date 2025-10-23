@@ -25,6 +25,7 @@ type mockUserRepository struct {
 	mu        sync.RWMutex
 	users     map[string]User
 	callCount map[string]int // Track method calls to verify caching behavior
+	scopeDefaults repository.ScopeDefaults
 }
 
 func newMockUserRepository() *mockUserRepository {
@@ -223,6 +224,13 @@ func (m *mockUserRepository) Raw(ctx context.Context, sql string, args ...any) (
 }
 func (m *mockUserRepository) RawTx(ctx context.Context, tx bun.IDB, sql string, args ...any) ([]User, error) {
 	return m.Raw(ctx, sql, args...)
+}
+func (m *mockUserRepository) RegisterScope(name string, scope repository.ScopeDefinition) {}
+func (m *mockUserRepository) SetScopeDefaults(defaults repository.ScopeDefaults) {
+	m.scopeDefaults = repository.CloneScopeDefaults(defaults)
+}
+func (m *mockUserRepository) GetScopeDefaults() repository.ScopeDefaults {
+	return repository.CloneScopeDefaults(m.scopeDefaults)
 }
 func (m *mockUserRepository) Handlers() repository.ModelHandlers[User] {
 	return repository.ModelHandlers[User]{}
