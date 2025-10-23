@@ -1246,6 +1246,87 @@ func TestCacheInvalidation_Update(t *testing.T) {
 	}
 }
 
+func TestCacheInvalidation_UpdateWithScopedGetByID(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := cache.NewDefaultKeySerializer()
+
+	originalUser := TestUser{ID: "user-1", Name: "Original User"}
+	updatedUser := TestUser{ID: "user-1", Name: "Updated User"}
+
+	baseRepo.getByIDResult = originalUser
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	ctx := repository.WithSelectScopes(context.Background(), "tenant")
+	ctx = repository.WithScopeData(ctx, "tenant", "tenant-a")
+
+	signature := cached.scopeSignature(ctx, repository.ScopeOperationSelect)
+	if signature.IsZero() {
+		t.Fatalf("Expected non-zero scope signature")
+	}
+
+	key := cached.key("GetByID", "user-1", signature)
+
+	user, err := cached.GetByID(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("Initial GetByID call failed: %v", err)
+	}
+	if user.Name != "Original User" {
+		t.Fatalf("Expected 'Original User', got '%s'", user.Name)
+	}
+
+	cacheService.mu.Lock()
+	_, exists := cacheService.storage[key]
+	cacheService.mu.Unlock()
+	if !exists {
+		t.Fatalf("Expected cache entry for scoped GetByID key %s", key)
+	}
+
+	baseRepo.updateResult = updatedUser
+	baseRepo.getByIDResult = updatedUser
+
+	if _, err := cached.Update(context.Background(), updatedUser); err != nil {
+		t.Fatalf("Update operation failed: %v", err)
+	}
+
+	cacheService.mu.Lock()
+	_, exists = cacheService.storage[key]
+	cacheService.mu.Unlock()
+	if exists {
+		t.Fatalf("Expected scoped GetByID cache entry %s to be invalidated after update", key)
+	}
+
+	baseRepo.clearCalls()
+	baseRepo.getByIDResult = updatedUser
+
+	result, err := cached.GetByID(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("GetByID after update failed: %v", err)
+	}
+	if result.Name != "Updated User" {
+		t.Fatalf("Expected 'Updated User' after update, got '%s'", result.Name)
+	}
+
+	calls := baseRepo.getCalls()
+	if len(calls) != 1 || calls[0] != "GetByID" {
+		t.Fatalf("Expected base repository GetByID to be called once after invalidation, got %v", calls)
+	}
+
+	deletePrefix := cached.methodPrefix("GetByID", "user-1")
+	cacheCalls := cacheService.getCalls()
+	foundPrefix := false
+	for _, call := range cacheCalls {
+		if strings.Contains(call, deletePrefix) {
+			foundPrefix = true
+			break
+		}
+	}
+	if !foundPrefix {
+		t.Errorf("Expected cache invalidation call containing '%s', got calls: %v", deletePrefix, cacheCalls)
+	}
+}
+
 // Test cache invalidation after delete operations
 func TestCacheInvalidation_Delete(t *testing.T) {
 	baseRepo := &mockRepository[TestUser]{}
