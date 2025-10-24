@@ -155,9 +155,11 @@ Scopes registered or defaulted through the cached repository are forwarded to th
 
 ```go
 cachedRepo.RegisterScope("tenant", tenantScopeDefinition)
-cachedRepo.SetScopeDefaults(repository.ScopeDefaults{
+if err := cachedRepo.SetScopeDefaults(repository.ScopeDefaults{
     Select: []string{"tenant"},
-})
+}); err != nil {
+    panic(err)
+}
 ```
 
 This keeps cache keys aligned with whatever filters the base repository enforces while respecting `WithoutDefaultScopes`, `WithSelectScopes`, and other helpers.
