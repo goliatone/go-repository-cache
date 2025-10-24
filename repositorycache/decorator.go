@@ -389,9 +389,12 @@ func (c *CachedRepository[T]) RegisterScope(name string, scope repository.ScopeD
 	c.base.RegisterScope(name, scope)
 }
 
-func (c *CachedRepository[T]) SetScopeDefaults(defaults repository.ScopeDefaults) {
-	c.base.SetScopeDefaults(defaults)
+func (c *CachedRepository[T]) SetScopeDefaults(defaults repository.ScopeDefaults) error {
+	if err := c.base.SetScopeDefaults(defaults); err != nil {
+		return err
+	}
 	c.setScopeDefaults(defaults)
+	return nil
 }
 
 func (c *CachedRepository[T]) GetScopeDefaults() repository.ScopeDefaults {
