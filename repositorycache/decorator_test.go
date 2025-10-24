@@ -22,25 +22,26 @@ type TestUser struct {
 
 // mockRepository is a comprehensive mock that tracks method calls for testing
 type mockRepository[T any] struct {
-	mu             sync.Mutex
-	calls          []string
-	getResult      T
-	getError       error
-	getByIDResult  T
-	getByIDError   error
-	listRecords    []T
-	listTotal      int
-	listError      error
-	countResult    int
-	countError     error
-	getByIDResult2 T
-	getByIDError2  error
-	createResult   T
-	createError    error
-	updateResult   T
-	updateError    error
-	deleteError    error
-	scopeDefaults  repository.ScopeDefaults
+	mu                  sync.Mutex
+	calls               []string
+	getResult           T
+	getError            error
+	getByIDResult       T
+	getByIDError        error
+	listRecords         []T
+	listTotal           int
+	listError           error
+	countResult         int
+	countError          error
+	getByIDResult2      T
+	getByIDError2       error
+	createResult        T
+	createError         error
+	updateResult        T
+	updateError         error
+	deleteError         error
+	scopeDefaults       repository.ScopeDefaults
+	setScopeDefaultsErr error
 }
 
 // Helper method to record method calls
@@ -110,9 +111,13 @@ func (m *mockRepository[T]) RegisterScope(name string, scope repository.ScopeDef
 	m.recordCall("RegisterScope")
 }
 
-func (m *mockRepository[T]) SetScopeDefaults(defaults repository.ScopeDefaults) {
+func (m *mockRepository[T]) SetScopeDefaults(defaults repository.ScopeDefaults) error {
 	m.recordCall("SetScopeDefaults")
+	if m.setScopeDefaultsErr != nil {
+		return m.setScopeDefaultsErr
+	}
 	m.scopeDefaults = repository.CloneScopeDefaults(defaults)
+	return nil
 }
 
 func (m *mockRepository[T]) GetScopeDefaults() repository.ScopeDefaults {
