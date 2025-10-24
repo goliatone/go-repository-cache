@@ -3,7 +3,7 @@ module github.com/goliatone/go-repository-cache
 go 1.23.4
 
 require (
-	github.com/goliatone/go-repository-bun v0.5.2
+	github.com/goliatone/go-repository-bun v0.7.0
 	github.com/uptrace/bun v1.2.14
 	github.com/viccon/sturdyc v1.1.5
 )
