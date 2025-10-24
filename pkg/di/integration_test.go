@@ -22,9 +22,10 @@ type User struct {
 
 // mockUserRepository provides a fake repository implementation for testing
 type mockUserRepository struct {
-	mu        sync.RWMutex
-	users     map[string]User
-	callCount map[string]int // Track method calls to verify caching behavior
+	mu            sync.RWMutex
+	users         map[string]User
+	callCount     map[string]int // Track method calls to verify caching behavior
+	scopeDefaults repository.ScopeDefaults
 }
 
 func newMockUserRepository() *mockUserRepository {
@@ -223,6 +224,16 @@ func (m *mockUserRepository) Raw(ctx context.Context, sql string, args ...any) (
 }
 func (m *mockUserRepository) RawTx(ctx context.Context, tx bun.IDB, sql string, args ...any) ([]User, error) {
 	return m.Raw(ctx, sql, args...)
+}
+func (m *mockUserRepository) RegisterScope(name string, scope repository.ScopeDefinition) {}
+func (m *mockUserRepository) SetScopeDefaults(defaults repository.ScopeDefaults) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.scopeDefaults = repository.CloneScopeDefaults(defaults)
+	return nil
+}
+func (m *mockUserRepository) GetScopeDefaults() repository.ScopeDefaults {
+	return repository.CloneScopeDefaults(m.scopeDefaults)
 }
 func (m *mockUserRepository) Handlers() repository.ModelHandlers[User] {
 	return repository.ModelHandlers[User]{}

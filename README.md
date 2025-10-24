@@ -7,9 +7,10 @@ A **type-safe caching decorator** for [go-repository-bun](https://github.com/gol
 - **Drop-in compatibility** - Implements the same `Repository[T]` interface
 - **Stampede protection** - Non-blocking reads with in-flight request deduplication
 - **Type-safe caching** - Generic implementation maintains full type safety
+- **Smart invalidation** - Detects unique fields via bun metadata to target `GetByIdentifier` caches
 - **Selective caching** - Only read operations are cached; writes pass through
 - **Transaction awareness** - Bypasses cache for transactional operations
-- **Smart key generation** - Handles complex criteria including function pointers
+- **Smart key generation** - Handles complex criteria and sanitises namespaces for Redis/Memcache safety
 - **Configurable** - Pluggable key serialization and cache configuration
 
 ## Quick Start
@@ -63,6 +64,17 @@ func main() {
     user, err := cachedRepo.GetByID(ctx, "user-123") // First call hits DB
     user, err = cachedRepo.GetByID(ctx, "user-123")  // Second call hits cache
 }
+```
+
+Need to target additional identifier fields (for example, a `Slug` column)? Pass them explicitly:
+
+```go
+cachedRepo := repositorycache.NewWithIdentifierFields(
+    baseRepo,
+    cacheService,
+    keySerializer,
+    "Slug", "ExternalID",
+)
 ```
 
 ### Using the Dependency Injection Container
@@ -120,12 +132,37 @@ The library automatically generates stable cache keys from:
 - Function pointers (stable within process lifetime)
 
 ```go
-// These generate different cache keys:
+//these generate different cache keys:
 repo.GetByID(ctx, "123")
 repo.GetByID(ctx, "123", repository.WithDeleted())
 repo.List(ctx, repository.Where("active", true))
 repo.List(ctx, repository.Where("active", false))
 ```
+
+### Scope Aware Keys
+
+When your base repository uses the `go-repository-bun` scope system, the decorator automatically folds the active scope names and any `WithScopeData` payloads into every cached key. Tenant/session specific contexts therefore never share cached rows:
+
+```go
+ctx := repository.WithSelectScopes(ctx, "tenant")
+ctx = repository.WithScopeData(ctx, "tenant", tenantID)
+
+// Key includes both the "tenant" scope name and the concrete tenantID value
+users, total, err := cachedRepo.List(ctx, repository.SelectPaginate(25, 0))
+```
+
+Scopes registered or defaulted through the cached repository are forwarded to the underlying repository:
+
+```go
+cachedRepo.RegisterScope("tenant", tenantScopeDefinition)
+if err := cachedRepo.SetScopeDefaults(repository.ScopeDefaults{
+    Select: []string{"tenant"},
+}); err != nil {
+    panic(err)
+}
+```
+
+This keeps cache keys aligned with whatever filters the base repository enforces while respecting `WithoutDefaultScopes`, `WithSelectScopes`, and other helpers.
 
 ### Transaction Handling
 
@@ -135,7 +172,7 @@ Operations within transactions bypass the cache to ensure consistency:
 // This hits the cache
 user, err := repo.GetByID(ctx, "123")
 
-// This bypasses the cache (goes directly to DB)
+// This bypasses the cache and goes directly to DB
 err = repo.WithTx(ctx, func(ctx context.Context, tx bun.IDB) error {
     user, err := repo.GetByIDTx(ctx, tx, "123") // Direct DB access
     return repo.UpdateTx(ctx, tx, updatedUser)
@@ -148,12 +185,11 @@ err = repo.WithTx(ctx, func(ctx context.Context, tx bun.IDB) error {
 
 ```go
 config := cache.Config{
-    // Basic settings
     TTL:                30 * time.Minute,
     NumShards:          256,
     EvictionPercentage: 10,
 
-    // Early refresh (background refresh before expiry)
+    // background refresh before expiry
     EarlyRefresh: &cache.EarlyRefreshConfig{
         MinAsyncRefreshTime: 20 * time.Minute,
         MaxAsyncRefreshTime: 25 * time.Minute,
@@ -239,10 +275,10 @@ func TestCachedRepository(t *testing.T) {
         t.Fatalf("failed to create container: %v", err)
     }
 
-    baseRepo := &mockUserRepository{} // Your test double
+    baseRepo := &mockUserRepository{}
     cachedRepo := container.NewCachedRepository(baseRepo)
 
-    // Test cache behavior
+    // test cache behavior
     user1, _ := cachedRepo.GetByID(ctx, "123") // Calls base repo
     user2, _ := cachedRepo.GetByID(ctx, "123") // Uses cache
 

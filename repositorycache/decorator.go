@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	repository "github.com/goliatone/go-repository-bun"
 	"github.com/goliatone/go-repository-cache/cache"
@@ -22,11 +23,30 @@ type listResult[T any] struct {
 
 // CachedRepository decorates a base repository with caching functionality
 type CachedRepository[T any] struct {
-	base          repository.Repository[T]
-	cache         cache.CacheService
-	keySerializer cache.KeySerializer
-	namespace     string
-	identifiers   []string
+	base            repository.Repository[T]
+	cache           cache.CacheService
+	keySerializer   cache.KeySerializer
+	namespace       string
+	identifiers     []string
+	scopeDefaults   repository.ScopeDefaults
+	scopeDefaultsMu sync.RWMutex
+}
+
+func (c *CachedRepository[T]) setScopeDefaults(defaults repository.ScopeDefaults) {
+	c.scopeDefaultsMu.Lock()
+	defer c.scopeDefaultsMu.Unlock()
+	c.scopeDefaults = repository.CloneScopeDefaults(defaults)
+}
+
+func (c *CachedRepository[T]) currentScopeDefaults() repository.ScopeDefaults {
+	c.scopeDefaultsMu.RLock()
+	defer c.scopeDefaultsMu.RUnlock()
+	return repository.CloneScopeDefaults(c.scopeDefaults)
+}
+
+func (c *CachedRepository[T]) scopeSignature(ctx context.Context, op repository.ScopeOperation) repository.ScopeState {
+	defaults := c.currentScopeDefaults()
+	return repository.ResolveScopeState(ctx, defaults, op)
 }
 
 func toAnySlice[T any](items []T) []any {
@@ -53,7 +73,12 @@ func NewWithIdentifierFields[T any](base repository.Repository[T], cacheService 
 
 // Get retrieves a single record using the provided criteria, with caching
 func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.SelectCriteria) (T, error) {
-	key := c.key("Get", toAnySlice(criteria)...)
+	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
+	args := toAnySlice(criteria)
+	if !signature.IsZero() {
+		args = append([]any{signature}, args...)
+	}
+	key := c.key("Get", args...)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.Get(ctx, criteria...)
 	})
@@ -61,7 +86,12 @@ func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.Se
 
 // GetByID retrieves a record by ID with optional criteria, with caching
 func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria ...repository.SelectCriteria) (T, error) {
-	args := append([]any{id}, toAnySlice(criteria)...)
+	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
+	args := []any{id}
+	if !signature.IsZero() {
+		args = append(args, signature)
+	}
+	args = append(args, toAnySlice(criteria)...)
 	key := c.key("GetByID", args...)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.GetByID(ctx, id, criteria...)
@@ -70,7 +100,12 @@ func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria .
 
 // List retrieves multiple records using the provided criteria, with caching
 func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.SelectCriteria) ([]T, int, error) {
-	key := c.key("List", toAnySlice(criteria)...)
+	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
+	args := toAnySlice(criteria)
+	if !signature.IsZero() {
+		args = append([]any{signature}, args...)
+	}
+	key := c.key("List", args...)
 	res, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (listResult[T], error) {
 		records, total, err := c.base.List(ctx, criteria...)
 		return listResult[T]{Records: records, Total: total}, err
@@ -83,7 +118,12 @@ func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.S
 
 // Count returns the number of records matching the criteria, with caching
 func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.SelectCriteria) (int, error) {
-	key := c.key("Count", toAnySlice(criteria)...)
+	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
+	args := toAnySlice(criteria)
+	if !signature.IsZero() {
+		args = append([]any{signature}, args...)
+	}
+	key := c.key("Count", args...)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (int, error) {
 		return c.base.Count(ctx, criteria...)
 	})
@@ -91,7 +131,12 @@ func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.
 
 // GetByIdentifier retrieves a record by identifier with optional criteria, with caching
 func (c *CachedRepository[T]) GetByIdentifier(ctx context.Context, identifier string, criteria ...repository.SelectCriteria) (T, error) {
-	args := append([]any{identifier}, toAnySlice(criteria)...)
+	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
+	args := []any{identifier}
+	if !signature.IsZero() {
+		args = append(args, signature)
+	}
+	args = append(args, toAnySlice(criteria)...)
 	key := c.key("GetByIdentifier", args...)
 	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.GetByIdentifier(ctx, identifier, criteria...)
@@ -340,6 +385,22 @@ func (c *CachedRepository[T]) Handlers() repository.ModelHandlers[T] {
 	return c.base.Handlers()
 }
 
+func (c *CachedRepository[T]) RegisterScope(name string, scope repository.ScopeDefinition) {
+	c.base.RegisterScope(name, scope)
+}
+
+func (c *CachedRepository[T]) SetScopeDefaults(defaults repository.ScopeDefaults) error {
+	if err := c.base.SetScopeDefaults(defaults); err != nil {
+		return err
+	}
+	c.setScopeDefaults(defaults)
+	return nil
+}
+
+func (c *CachedRepository[T]) GetScopeDefaults() repository.ScopeDefaults {
+	return c.currentScopeDefaults()
+}
+
 // extractID attempts to extract an ID field from a record using reflection
 func (c *CachedRepository[T]) extractID(record T) (string, error) {
 	v, err := structValue(record)
@@ -533,6 +594,7 @@ func newCachedRepository[T any](base repository.Repository[T], cache cache.Cache
 		namespace:     deriveNamespace(base),
 	}
 	repo.identifiers = repo.resolveIdentifierFields(identifierFields)
+	repo.setScopeDefaults(base.GetScopeDefaults())
 	return repo
 }
 
