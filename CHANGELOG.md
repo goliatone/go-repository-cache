@@ -1,5 +1,29 @@
 # Changelog
 
+# [0.5.0](https://github.com/goliatone/go-auth/compare/v0.4.0...v0.5.0) - (2025-10-24)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Update to use new interface ([957359c](https://github.com/goliatone/go-auth/commit/957359cfe5f1ba3c6e46765996f9422dbf6722fc))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.5.0 ([8a07bf5](https://github.com/goliatone/go-auth/commit/8a07bf51792c9c01f6aac8f356f27ec3332c7a1e))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.4.0 ([ccff620](https://github.com/goliatone/go-auth/commit/ccff620a84d7e0a1a07321d0932107454959d90f))  - (goliatone)
+
+## <!-- 30 -->📝 Other
+
+- PR [#1](https://github.com/goliatone/go-auth/pull/1): Add scopes ([efbd403](https://github.com/goliatone/go-auth/commit/efbd403141e4627c853f612472f421dbfaf3d19c))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update deps ([910ef36](https://github.com/goliatone/go-auth/commit/910ef36d963c4c62b11b3df06147358c31a32031))  - (goliatone)
+- Update tests ([2b6d929](https://github.com/goliatone/go-auth/commit/2b6d929bec46f02f021570b16a1f08656b7b7cc4))  - (goliatone)
+- Update readme ([ec55e3c](https://github.com/goliatone/go-auth/commit/ec55e3cad0302e60ab5cf278741635d3a244f0d1))  - (goliatone)
+
 # [0.4.0](https://github.com/goliatone/go-auth/compare/v0.3.0...v0.4.0) - (2025-10-21)
 
 ## <!-- 13 -->📦 Bumps
