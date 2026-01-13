@@ -24,6 +24,13 @@ type CacheService interface {
 	InvalidateKeys(ctx context.Context, keys []string) error
 }
 
+// TagRegistry is an optional cache capability for associating cache keys with tags.
+// It is intended to be used via type assertion when available.
+type TagRegistry interface {
+	AddTags(ctx context.Context, key string, tags []string) error
+	InvalidateTags(ctx context.Context, tags []string) error
+}
+
 // ErrInvalidResultType indicates that the underlying cache implementation returned a value
 // that cannot be asserted to the requested generic type.
 var ErrInvalidResultType = errors.New("cache: invalid result type")
