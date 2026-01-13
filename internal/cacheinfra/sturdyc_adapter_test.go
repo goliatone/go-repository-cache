@@ -14,6 +14,11 @@ type cacheService interface {
 	InvalidateKeys(ctx context.Context, keys []string) error
 }
 
+type tagRegistry interface {
+	AddTags(ctx context.Context, key string, tags []string) error
+	InvalidateTags(ctx context.Context, tags []string) error
+}
+
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
@@ -707,6 +712,95 @@ func TestSturdycService_InvalidateKeys(t *testing.T) {
 	})
 }
 
+func TestSturdycService_TagRegistry(t *testing.T) {
+	cfg := Config{
+		Capacity:           100,
+		NumShards:          2,
+		TTL:                1 * time.Minute,
+		EvictionPercentage: 10,
+	}
+	service, err := NewSturdycService(cfg)
+	if err != nil {
+		t.Fatalf("failed to create service: %v", err)
+	}
+
+	ctx := context.Background()
+
+	key1 := "tagged:key:1"
+	key2 := "tagged:key:2"
+
+	_, err = service.GetOrFetch(ctx, key1, func(ctx context.Context) (any, error) {
+		return "value1", nil
+	})
+	if err != nil {
+		t.Fatalf("failed to cache value for key1: %v", err)
+	}
+
+	_, err = service.GetOrFetch(ctx, key2, func(ctx context.Context) (any, error) {
+		return "value2", nil
+	})
+	if err != nil {
+		t.Fatalf("failed to cache value for key2: %v", err)
+	}
+
+	tagA := "scope::tenant-a"
+	tagB := "scope::tenant-b"
+
+	if err := service.AddTags(ctx, key1, []string{tagA}); err != nil {
+		t.Fatalf("failed to add tags for key1: %v", err)
+	}
+	if err := service.AddTags(ctx, key2, []string{tagB}); err != nil {
+		t.Fatalf("failed to add tags for key2: %v", err)
+	}
+
+	if err := service.AddTags(ctx, "", []string{tagA}); err != nil {
+		t.Fatalf("expected no error adding tags with empty key: %v", err)
+	}
+
+	if err := service.AddTags(ctx, key1, nil); err != nil {
+		t.Fatalf("expected no error adding nil tags: %v", err)
+	}
+
+	if err := service.AddTags(ctx, key1, []string{}); err != nil {
+		t.Fatalf("expected no error adding empty tags: %v", err)
+	}
+
+	registryValue, ok := service.client.Get(tagRegistryKey(tagA))
+	if !ok {
+		t.Fatalf("expected tag registry for %s to exist", tagA)
+	}
+
+	registry, ok := registryValue.(map[string]struct{})
+	if !ok {
+		t.Fatalf("expected tag registry to be map[string]struct{}, got %T", registryValue)
+	}
+	if _, exists := registry[key1]; !exists {
+		t.Fatalf("expected key1 to be registered under tag %s", tagA)
+	}
+
+	if err := service.InvalidateTags(ctx, []string{tagA}); err != nil {
+		t.Fatalf("failed to invalidate tag %s: %v", tagA, err)
+	}
+
+	if err := service.InvalidateTags(ctx, []string{}); err != nil {
+		t.Fatalf("expected no error invalidating empty tag list: %v", err)
+	}
+
+	if err := service.InvalidateTags(ctx, nil); err != nil {
+		t.Fatalf("expected no error invalidating nil tag list: %v", err)
+	}
+
+	if _, ok := service.client.Get(key1); ok {
+		t.Fatalf("expected key1 to be invalidated for tag %s", tagA)
+	}
+	if _, ok := service.client.Get(key2); !ok {
+		t.Fatalf("expected key2 to remain cached for tag %s", tagB)
+	}
+	if _, ok := service.client.Get(tagRegistryKey(tagA)); ok {
+		t.Fatalf("expected tag registry for %s to be removed", tagA)
+	}
+}
+
 func TestSturdycService_InterfaceCompliance(t *testing.T) {
 	cfg := DefaultConfig()
 	service, err := NewSturdycService(cfg)
@@ -716,6 +810,7 @@ func TestSturdycService_InterfaceCompliance(t *testing.T) {
 
 	// Verify that sturdycService implements the cacheService interface
 	var _ cacheService = service
+	var _ tagRegistry = service
 
 	// Additional runtime verification
 	if service == nil {
@@ -736,6 +831,14 @@ func TestSturdycService_InterfaceCompliance(t *testing.T) {
 
 	if err := service.InvalidateKeys(ctx, []string{"test1", "test2"}); err != nil {
 		t.Errorf("InvalidateKeys method failed: %v", err)
+	}
+
+	if err := service.AddTags(ctx, "test", []string{"tag1"}); err != nil {
+		t.Errorf("AddTags method failed: %v", err)
+	}
+
+	if err := service.InvalidateTags(ctx, []string{"tag1"}); err != nil {
+		t.Errorf("InvalidateTags method failed: %v", err)
 	}
 
 	fetchFn := func(ctx context.Context) (any, error) {

@@ -216,6 +216,7 @@ type mockCacheService struct {
 	storage map[string]any
 	hits    map[string]bool
 	errors  map[string]error
+	tags    map[string]map[string]struct{}
 }
 
 func newMockCacheService() *mockCacheService {
@@ -223,7 +224,103 @@ func newMockCacheService() *mockCacheService {
 		storage: make(map[string]any),
 		hits:    make(map[string]bool),
 		errors:  make(map[string]error),
+		tags:    make(map[string]map[string]struct{}),
 	}
+}
+
+// mockCacheServiceNoTags tracks cache operations without supporting tag registry.
+type mockCacheServiceNoTags struct {
+	mu      sync.Mutex
+	calls   []string
+	storage map[string]any
+	errors  map[string]error
+}
+
+func newMockCacheServiceNoTags() *mockCacheServiceNoTags {
+	return &mockCacheServiceNoTags{
+		storage: make(map[string]any),
+		errors:  make(map[string]error),
+	}
+}
+
+func (m *mockCacheServiceNoTags) recordCall(method string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, method)
+}
+
+func (m *mockCacheServiceNoTags) getCalls() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.calls...)
+}
+
+func (m *mockCacheServiceNoTags) SetCacheValue(key string, value any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.storage[key] = value
+}
+
+func (m *mockCacheServiceNoTags) GetOrFetch(ctx context.Context, key string, fetchFn any) (any, error) {
+	m.recordCall(fmt.Sprintf("GetOrFetch:%s", key))
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err, exists := m.errors[key]; exists {
+		return nil, err
+	}
+
+	if value, exists := m.storage[key]; exists {
+		return value, nil
+	}
+
+	fv := reflect.ValueOf(fetchFn)
+	result := fv.Call([]reflect.Value{reflect.ValueOf(ctx)})
+
+	if len(result) != 2 {
+		return nil, errors.New("fetchFn must return (T, error)")
+	}
+
+	if !result[1].IsNil() {
+		return nil, result[1].Interface().(error)
+	}
+
+	value := result[0].Interface()
+	m.storage[key] = value
+	return value, nil
+}
+
+func (m *mockCacheServiceNoTags) Delete(ctx context.Context, key string) error {
+	m.recordCall(fmt.Sprintf("Delete:%s", key))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.storage, key)
+	return nil
+}
+
+func (m *mockCacheServiceNoTags) DeleteByPrefix(ctx context.Context, prefix string) error {
+	m.recordCall(fmt.Sprintf("DeleteByPrefix:%s", prefix))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for key := range m.storage {
+		if len(prefix) == 0 || (len(key) >= len(prefix) && key[:len(prefix)] == prefix) {
+			delete(m.storage, key)
+		}
+	}
+	return nil
+}
+
+func (m *mockCacheServiceNoTags) InvalidateKeys(ctx context.Context, keys []string) error {
+	m.recordCall(fmt.Sprintf("InvalidateKeys:%v", keys))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, key := range keys {
+		delete(m.storage, key)
+	}
+	return nil
 }
 
 // SetCacheValue pre-populates cache to simulate cache hit
@@ -319,6 +416,44 @@ func (m *mockCacheService) InvalidateKeys(ctx context.Context, keys []string) er
 	for _, key := range keys {
 		delete(m.storage, key)
 		delete(m.hits, key)
+	}
+	return nil
+}
+
+func (m *mockCacheService) AddTags(ctx context.Context, key string, tags []string) error {
+	m.recordCall(fmt.Sprintf("AddTags:%s:%v", key, tags))
+	if key == "" || len(tags) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, tag := range tags {
+		if tag == "" {
+			continue
+		}
+		entries := m.tags[tag]
+		if entries == nil {
+			entries = make(map[string]struct{})
+			m.tags[tag] = entries
+		}
+		entries[key] = struct{}{}
+	}
+	return nil
+}
+
+func (m *mockCacheService) InvalidateTags(ctx context.Context, tags []string) error {
+	m.recordCall(fmt.Sprintf("InvalidateTags:%v", tags))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, tag := range tags {
+		entries := m.tags[tag]
+		for key := range entries {
+			delete(m.storage, key)
+			delete(m.hits, key)
+		}
+		delete(m.tags, tag)
 	}
 	return nil
 }
@@ -950,7 +1085,7 @@ func TestKeySerializerIntegration(t *testing.T) {
 	_, _ = cached.Count(context.Background())
 	_, _ = cached.GetByIdentifier(context.Background(), "test-identifier")
 
-	// Verify key serializer was called
+	// Verify key serializer was called for cache keys (additional tag calls are allowed)
 	calls := keySerializer.getCalls()
 	expectedCalls := []string{
 		cached.methodKey("Get") + ":[]",
@@ -960,14 +1095,18 @@ func TestKeySerializerIntegration(t *testing.T) {
 		cached.methodKey("GetByIdentifier") + ":[test-identifier]",
 	}
 
-	if len(calls) != len(expectedCalls) {
-		t.Errorf("expected %d key serializer calls, got %d: %v", len(expectedCalls), len(calls), calls)
+	if len(calls) < len(expectedCalls) {
+		t.Errorf("expected at least %d key serializer calls, got %d: %v", len(expectedCalls), len(calls), calls)
 	}
 
-	for i, expected := range expectedCalls {
-		if i >= len(calls) || calls[i] != expected {
-			t.Errorf("expected key serializer call %d to be '%s', got '%s'", i, expected, calls[i])
+	matched := 0
+	for _, call := range calls {
+		if matched < len(expectedCalls) && call == expectedCalls[matched] {
+			matched++
 		}
+	}
+	if matched != len(expectedCalls) {
+		t.Errorf("expected key serializer calls %v to appear in order, got %v", expectedCalls, calls)
 	}
 }
 
@@ -1138,15 +1277,16 @@ func TestCacheInvalidation_Create(t *testing.T) {
 
 	// Verify cache invalidation was called
 	cacheCalls := cacheService.getCalls()
+	listTag := strings.Join([]string{cached.namespace, "list"}, cache.KeySeparator)
 	found := false
 	for _, call := range cacheCalls {
-		if strings.Contains(call, cached.methodKey("List")) || strings.Contains(call, cached.methodKey("Count")) {
+		if strings.Contains(call, "InvalidateTags") && strings.Contains(call, listTag) {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("Expected cache Delete calls for List and Count prefixes after create operation")
+		t.Error("Expected cache InvalidateTags call containing list tag after create operation")
 	}
 }
 
@@ -1232,15 +1372,16 @@ func TestCacheInvalidation_Update(t *testing.T) {
 
 	// Verify cache invalidation was called for relevant prefixes
 	cacheCalls := cacheService.getCalls()
+	signature := cached.scopeSignature(context.Background(), repository.ScopeOperationSelect)
 	expectedSubstrings := []string{
-		cached.methodPrefix("GetByID", "user-1"),
-		cached.methodKey("List"),
-		cached.methodKey("Count"),
+		cached.idTag("user-1"),
+		cached.listTag(),
+		cached.scopeTag(signature),
 	}
 	for _, expected := range expectedSubstrings {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.Contains(call, expected) {
+			if strings.Contains(call, "InvalidateTags") && strings.Contains(call, expected) {
 				found = true
 				break
 			}
@@ -1318,17 +1459,17 @@ func TestCacheInvalidation_UpdateWithScopedGetByID(t *testing.T) {
 		t.Fatalf("Expected base repository GetByID to be called once after invalidation, got %v", calls)
 	}
 
-	deletePrefix := cached.methodPrefix("GetByID", "user-1")
 	cacheCalls := cacheService.getCalls()
-	foundPrefix := false
+	expectedTag, _ := cached.idTag("user-1")
+	foundTag := false
 	for _, call := range cacheCalls {
-		if strings.Contains(call, deletePrefix) {
-			foundPrefix = true
+		if strings.Contains(call, "InvalidateTags") && strings.Contains(call, expectedTag) {
+			foundTag = true
 			break
 		}
 	}
-	if !foundPrefix {
-		t.Errorf("Expected cache invalidation call containing '%s', got calls: %v", deletePrefix, cacheCalls)
+	if !foundTag {
+		t.Errorf("Expected cache invalidation call containing '%s', got calls: %v", expectedTag, cacheCalls)
 	}
 }
 
@@ -1404,15 +1545,16 @@ func TestCacheInvalidation_Delete(t *testing.T) {
 
 	// Verify cache invalidation was called for relevant prefixes
 	cacheCalls := cacheService.getCalls()
+	signature := cached.scopeSignature(context.Background(), repository.ScopeOperationSelect)
 	expectedDeleteSubstrings := []string{
-		cached.methodPrefix("GetByID", "user-1"),
-		cached.methodKey("List"),
-		cached.methodKey("Count"),
+		cached.idTag("user-1"),
+		cached.listTag(),
+		cached.scopeTag(signature),
 	}
 	for _, expected := range expectedDeleteSubstrings {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.Contains(call, expected) {
+			if strings.Contains(call, "InvalidateTags") && strings.Contains(call, expected) {
 				found = true
 				break
 			}
@@ -1487,15 +1629,16 @@ func TestCacheInvalidation_BulkOperations(t *testing.T) {
 
 	// Verify cache invalidation was called
 	cacheCalls := cacheService.getCalls()
+	listTag := strings.Join([]string{cached.namespace, "list"}, cache.KeySeparator)
 	found := false
 	for _, call := range cacheCalls {
-		if strings.Contains(call, cached.methodKey("List")) || strings.Contains(call, cached.methodKey("Count")) {
+		if strings.Contains(call, "InvalidateTags") && strings.Contains(call, listTag) {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("Expected cache Delete calls after CreateMany operation")
+		t.Error("Expected cache InvalidateTags call containing list tag after CreateMany operation")
 	}
 }
 
@@ -1549,23 +1692,19 @@ func TestCacheInvalidation_CriteriaOperations(t *testing.T) {
 
 	// Verify comprehensive cache invalidation was called
 	cacheCalls := cacheService.getCalls()
-	// For criteria operations, we should see Delete calls for prefixes that actually have cached keys
-	// In our test, we only cached GetByID, List, and Count, so only those should have Delete calls
-	expectedDeleteSubstrings := []string{
-		cached.methodPrefixWithSeparator("GetByID"),
-		cached.methodKey("List"),
-		cached.methodKey("Count"),
-	}
-	for _, substr := range expectedDeleteSubstrings {
+	listTag := strings.Join([]string{cached.namespace, "list"}, cache.KeySeparator)
+	signature := cached.scopeSignature(context.Background(), repository.ScopeOperationSelect)
+	expectedTags := []string{listTag, cached.scopeTag(signature)}
+	for _, expected := range expectedTags {
 		found := false
 		for _, call := range cacheCalls {
-			if strings.Contains(call, substr) {
+			if strings.Contains(call, "InvalidateTags") && strings.Contains(call, expected) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("Expected cache invalidation containing '%s' after DeleteMany operation, got calls: %v", substr, cacheCalls)
+			t.Errorf("Expected cache invalidation containing '%s' after DeleteMany operation, got calls: %v", expected, cacheCalls)
 		}
 	}
 
@@ -1686,14 +1825,268 @@ func TestCacheInvalidation_Concurrent(t *testing.T) {
 
 	// Verify that cache invalidation was called multiple times
 	cacheCalls := cacheService.getCalls()
-	deleteCount := 0
+	invalidateCount := 0
+	listTag := strings.Join([]string{cached.namespace, "list"}, cache.KeySeparator)
 	for _, call := range cacheCalls {
-		if strings.Contains(call, cached.methodKey("List")) || strings.Contains(call, cached.methodKey("Count")) {
-			deleteCount++
+		if strings.Contains(call, "InvalidateTags") && strings.Contains(call, listTag) {
+			invalidateCount++
 		}
 	}
 
-	if deleteCount == 0 {
-		t.Error("Expected cache Delete calls from concurrent operations")
+	if invalidateCount == 0 {
+		t.Error("Expected cache InvalidateTags calls from concurrent operations")
+	}
+}
+
+func TestCachedRepository_TagHelpers(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := cache.NewDefaultKeySerializer()
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	signature := repository.ScopeState{
+		Operation:   repository.ScopeOperationSelect,
+		UseDefaults: false,
+		Names:       []string{"tenant"},
+		Data:        map[string]any{"tenant": "tenant-a"},
+	}
+
+	scopeTag := cached.scopeTag(signature)
+	expectedScope := strings.Join([]string{cached.namespace, keySerializer.SerializeKey("scope", signature)}, cache.KeySeparator)
+	if scopeTag != expectedScope {
+		t.Fatalf("expected scope tag %s, got %s", expectedScope, scopeTag)
+	}
+
+	zeroSignature := repository.ScopeState{
+		Operation:   repository.ScopeOperationSelect,
+		UseDefaults: true,
+	}
+	zeroTag := cached.scopeTag(zeroSignature)
+	expectedZero := strings.Join([]string{cached.namespace, keySerializer.SerializeKey("scope", zeroSignature)}, cache.KeySeparator)
+	if zeroTag != expectedZero {
+		t.Fatalf("expected zero scope tag %s, got %s", expectedZero, zeroTag)
+	}
+
+	idTag, ok := cached.idTag("user-1")
+	if !ok {
+		t.Fatal("expected id tag to be generated")
+	}
+	expectedID := strings.Join([]string{cached.namespace, keySerializer.SerializeKey("id", "user-1")}, cache.KeySeparator)
+	if idTag != expectedID {
+		t.Fatalf("expected id tag %s, got %s", expectedID, idTag)
+	}
+
+	identifierTag, ok := cached.identifierTag("email-1")
+	if !ok {
+		t.Fatal("expected identifier tag to be generated")
+	}
+	expectedIdentifier := strings.Join([]string{cached.namespace, keySerializer.SerializeKey("identifier", "email-1")}, cache.KeySeparator)
+	if identifierTag != expectedIdentifier {
+		t.Fatalf("expected identifier tag %s, got %s", expectedIdentifier, identifierTag)
+	}
+
+	listTag := cached.listTag()
+	expectedList := strings.Join([]string{cached.namespace, "list"}, cache.KeySeparator)
+	if listTag != expectedList {
+		t.Fatalf("expected list tag %s, got %s", expectedList, listTag)
+	}
+}
+
+func TestCachedRepository_TagRegistration_Reads(t *testing.T) {
+	assertTagRegistered := func(t *testing.T, cacheService *mockCacheService, tag string, key string) {
+		t.Helper()
+		cacheService.mu.Lock()
+		defer cacheService.mu.Unlock()
+
+		entries := cacheService.tags[tag]
+		if entries == nil {
+			t.Fatalf("expected tag %s to be registered", tag)
+		}
+		if _, ok := entries[key]; !ok {
+			t.Fatalf("expected key %s to be registered under tag %s", key, tag)
+		}
+	}
+
+	t.Run("GetWithScope", func(t *testing.T) {
+		baseRepo := &mockRepository[TestUser]{}
+		baseRepo.getResult = TestUser{ID: "user-1", Name: "User 1"}
+		cacheService := newMockCacheService()
+		keySerializer := cache.NewDefaultKeySerializer()
+		cached := New(baseRepo, cacheService, keySerializer)
+
+		ctx := repository.WithSelectScopes(context.Background(), "tenant")
+		ctx = repository.WithScopeData(ctx, "tenant", "tenant-a")
+
+		if _, err := cached.Get(ctx); err != nil {
+			t.Fatalf("Get failed: %v", err)
+		}
+
+		signature := cached.scopeSignature(ctx, repository.ScopeOperationSelect)
+		expectedTag := strings.Join([]string{cached.namespace, keySerializer.SerializeKey("scope", signature)}, cache.KeySeparator)
+		expectedKey := cached.key("Get", signature)
+
+		assertTagRegistered(t, cacheService, expectedTag, expectedKey)
+	})
+
+	t.Run("GetByID", func(t *testing.T) {
+		baseRepo := &mockRepository[TestUser]{}
+		baseRepo.getByIDResult = TestUser{ID: "user-1", Name: "User 1"}
+		cacheService := newMockCacheService()
+		keySerializer := cache.NewDefaultKeySerializer()
+		cached := New(baseRepo, cacheService, keySerializer)
+
+		if _, err := cached.GetByID(context.Background(), "user-1"); err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+
+		expectedTag := strings.Join([]string{cached.namespace, keySerializer.SerializeKey("id", "user-1")}, cache.KeySeparator)
+		expectedKey := cached.key("GetByID", "user-1")
+
+		assertTagRegistered(t, cacheService, expectedTag, expectedKey)
+	})
+
+	t.Run("GetByIdentifier", func(t *testing.T) {
+		baseRepo := &mockRepository[TestUser]{}
+		baseRepo.getByIDResult2 = TestUser{ID: "user-1", Name: "User 1"}
+		cacheService := newMockCacheService()
+		keySerializer := cache.NewDefaultKeySerializer()
+		cached := New(baseRepo, cacheService, keySerializer)
+
+		if _, err := cached.GetByIdentifier(context.Background(), "email-1"); err != nil {
+			t.Fatalf("GetByIdentifier failed: %v", err)
+		}
+
+		expectedTag := strings.Join([]string{cached.namespace, keySerializer.SerializeKey("identifier", "email-1")}, cache.KeySeparator)
+		expectedKey := cached.key("GetByIdentifier", "email-1")
+
+		assertTagRegistered(t, cacheService, expectedTag, expectedKey)
+	})
+
+	t.Run("List", func(t *testing.T) {
+		baseRepo := &mockRepository[TestUser]{}
+		baseRepo.listRecords = []TestUser{{ID: "user-1", Name: "User 1"}}
+		baseRepo.listTotal = 1
+		cacheService := newMockCacheService()
+		keySerializer := cache.NewDefaultKeySerializer()
+		cached := New(baseRepo, cacheService, keySerializer)
+
+		if _, _, err := cached.List(context.Background()); err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+
+		expectedTag := strings.Join([]string{cached.namespace, "list"}, cache.KeySeparator)
+		expectedKey := cached.key("List")
+
+		assertTagRegistered(t, cacheService, expectedTag, expectedKey)
+	})
+
+	t.Run("Count", func(t *testing.T) {
+		baseRepo := &mockRepository[TestUser]{}
+		baseRepo.countResult = 1
+		cacheService := newMockCacheService()
+		keySerializer := cache.NewDefaultKeySerializer()
+		cached := New(baseRepo, cacheService, keySerializer)
+
+		if _, err := cached.Count(context.Background()); err != nil {
+			t.Fatalf("Count failed: %v", err)
+		}
+
+		expectedTag := strings.Join([]string{cached.namespace, "list"}, cache.KeySeparator)
+		expectedKey := cached.key("Count")
+
+		assertTagRegistered(t, cacheService, expectedTag, expectedKey)
+	})
+}
+
+func TestCachedRepository_ContextTags(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	baseRepo.listRecords = []TestUser{{ID: "user-1", Name: "User 1"}}
+	baseRepo.listTotal = 1
+	cacheService := newMockCacheService()
+	keySerializer := cache.NewDefaultKeySerializer()
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	ctx := WithCacheTags(context.Background(), "custom-tag", "custom-tag")
+	if _, _, err := cached.List(ctx); err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	expectedKey := cached.key("List")
+	cacheService.mu.Lock()
+	defer cacheService.mu.Unlock()
+
+	entries := cacheService.tags["custom-tag"]
+	if entries == nil {
+		t.Fatalf("expected context tag to be registered")
+	}
+	if _, ok := entries[expectedKey]; !ok {
+		t.Fatalf("expected key %s to be registered under context tag", expectedKey)
+	}
+}
+
+func TestCachedRepository_TagRegistration_CacheHit(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := cache.NewDefaultKeySerializer()
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	key := cached.key("GetByID", "user-1")
+	cacheService.SetCacheValue(key, TestUser{ID: "user-1", Name: "User 1"})
+
+	_, err := cached.GetByID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("GetByID failed: %v", err)
+	}
+
+	expectedTag := strings.Join([]string{cached.namespace, keySerializer.SerializeKey("id", "user-1")}, cache.KeySeparator)
+
+	cacheService.mu.Lock()
+	defer cacheService.mu.Unlock()
+
+	entries := cacheService.tags[expectedTag]
+	if entries == nil {
+		t.Fatalf("expected tag %s to be registered on cache hit", expectedTag)
+	}
+	if _, ok := entries[key]; !ok {
+		t.Fatalf("expected key %s to be registered under tag %s", key, expectedTag)
+	}
+}
+
+func TestCachedRepository_FallbackInvalidation_NoTagRegistry(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheServiceNoTags()
+	keySerializer := cache.NewDefaultKeySerializer()
+
+	originalUser := TestUser{ID: "user-1", Name: "Original User"}
+	updatedUser := TestUser{ID: "user-1", Name: "Updated User"}
+
+	baseRepo.updateResult = updatedUser
+	baseRepo.getByIDResult = originalUser
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	_, err := cached.Update(context.Background(), updatedUser)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	calls := cacheService.getCalls()
+	expectedPrefixes := []string{
+		"DeleteByPrefix:" + cached.methodPrefix("GetByID", "user-1"),
+		"DeleteByPrefix:" + cached.methodPrefixWithSeparator("List"),
+		"DeleteByPrefix:" + cached.methodPrefixWithSeparator("Count"),
+	}
+
+	for _, expected := range expectedPrefixes {
+		found := false
+		for _, call := range calls {
+			if strings.Contains(call, expected) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected fallback invalidation call containing %s, got calls: %v", expected, calls)
+		}
 	}
 }
