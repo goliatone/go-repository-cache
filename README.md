@@ -4,14 +4,14 @@ A **type-safe caching decorator** for [go-repository-bun](https://github.com/gol
 
 ## Features
 
-- **Drop-in compatibility** - Implements the same `Repository[T]` interface
-- **Stampede protection** - Non-blocking reads with in-flight request deduplication
-- **Type-safe caching** - Generic implementation maintains full type safety
-- **Smart invalidation** - Detects unique fields via bun metadata to target `GetByIdentifier` caches
-- **Selective caching** - Only read operations are cached; writes pass through
-- **Transaction awareness** - Bypasses cache for transactional operations
-- **Smart key generation** - Handles complex criteria and sanitises namespaces for Redis/Memcache safety
-- **Configurable** - Pluggable key serialization and cache configuration
+- **Drop-in compatibility**: Implements the same `Repository[T]` interface
+- **Stampede protection**: Non blocking reads with inflight request deduplication
+- **Type-safe caching**: Generic implementation maintains full type safety
+- **Tag based invalidation**: Registers read keys under tags and invalidates on writes
+- **Selective caching**: Only read operations are cached; writes pass through
+- **Transaction awareness**: Bypasses cache for transactional operations
+- **Smart key generation**: Handles complex criteria and sanitizes namespaces for Redis/Memcache safety
+- **Configurable**: Pluggable key serialization and cache configuration
 
 ## Quick Start
 
@@ -236,17 +236,20 @@ Additional benefits:
 
 ## Cache Invalidation
 
-Currently, write operations don't automatically invalidate cache entries. This is intentional to keep the implementation simple and predictable. Future versions will support:
+Write operations automatically invalidate cached reads when the cache service
+implements `cache.TagRegistry` (the default sturdyc adapter does). The decorator
+registers read keys under scope, ID, identifier, and list tags, then invalidates
+those tags after creates/updates/deletes.
 
-- Pattern-based invalidation (`User:*`)
-- Tag-based cache grouping
-- Time-based expiration strategies
-- Manual invalidation APIs
+If `TagRegistry` is not available, the decorator falls back to prefix deletion for
+List/Count/Get caches.
 
-For now, you can work around this by:
-1. Using shorter TTLs for frequently updated data
-2. Implementing custom invalidation in your service layer
-3. Using cache tags if your backend supports them
+Need custom grouping? Attach extra tags to any read path:
+
+```go
+ctx := repositorycache.WithCacheTags(ctx, "preferences:tenant:"+tenantID)
+prefs, total, err := cachedRepo.List(ctx, repository.Where("tenant_id", tenantID))
+```
 
 ## Examples
 
@@ -288,10 +291,10 @@ func TestCachedRepository(t *testing.T) {
 ```
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License, see the [LICENSE](LICENSE) file for details.
 
 ## Related Projects
 
-- [go-repository-bun](https://github.com/goliatone/go-repository-bun) - The base repository interface
-- [sturdyc](https://github.com/viccon/sturdyc) - The underlying cache library
-- [uptrace/bun](https://github.com/uptrace/bun) - The SQL client
+- [go-repository-bun](https://github.com/goliatone/go-repository-bun): The base repository interface
+- [sturdyc](https://github.com/viccon/sturdyc): The underlying cache library
+- [uptrace/bun](https://github.com/uptrace/bun): The SQL client
