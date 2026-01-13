@@ -1373,8 +1373,9 @@ func TestCacheInvalidation_Update(t *testing.T) {
 	// Verify cache invalidation was called for relevant prefixes
 	cacheCalls := cacheService.getCalls()
 	signature := cached.scopeSignature(context.Background(), repository.ScopeOperationSelect)
+	idTag, _ := cached.idTag("user-1")
 	expectedSubstrings := []string{
-		cached.idTag("user-1"),
+		idTag,
 		cached.listTag(),
 		cached.scopeTag(signature),
 	}
@@ -1546,8 +1547,9 @@ func TestCacheInvalidation_Delete(t *testing.T) {
 	// Verify cache invalidation was called for relevant prefixes
 	cacheCalls := cacheService.getCalls()
 	signature := cached.scopeSignature(context.Background(), repository.ScopeOperationSelect)
+	idTag, _ := cached.idTag("user-1")
 	expectedDeleteSubstrings := []string{
-		cached.idTag("user-1"),
+		idTag,
 		cached.listTag(),
 		cached.scopeTag(signature),
 	}
