@@ -290,6 +290,36 @@ func (s *sturdycService) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+func tagRegistryKey(tag string) string {
+	return "tag::" + tag
+}
+
+func (s *sturdycService) loadTagRegistry(key string) map[string]struct{} {
+	value, ok := s.client.Get(key)
+	if !ok || value == nil {
+		return nil
+	}
+
+	switch typed := value.(type) {
+	case map[string]struct{}:
+		return typed
+	case map[string]bool:
+		entries := make(map[string]struct{}, len(typed))
+		for k := range typed {
+			entries[k] = struct{}{}
+		}
+		return entries
+	case []string:
+		entries := make(map[string]struct{}, len(typed))
+		for _, k := range typed {
+			entries[k] = struct{}{}
+		}
+		return entries
+	default:
+		return nil
+	}
+}
+
 // DeleteByPrefix implements cache.CacheService.DeleteByPrefix.
 // Removes all entries from the cache that have keys starting with the given prefix.
 // This is useful for invalidating related cache entries (e.g., all entries for a specific entity).
@@ -302,6 +332,51 @@ func (s *sturdycService) DeleteByPrefix(ctx context.Context, prefix string) erro
 		if strings.HasPrefix(key, prefix) {
 			s.client.Delete(key)
 		}
+	}
+
+	return nil
+}
+
+// AddTags implements cache.TagRegistry.AddTags.
+// Stores tag registries inside the cache using keys prefixed with "tag::".
+func (s *sturdycService) AddTags(ctx context.Context, key string, tags []string) error {
+	if key == "" || len(tags) == 0 {
+		return nil
+	}
+
+	for _, tag := range tags {
+		if tag == "" {
+			continue
+		}
+		registryKey := tagRegistryKey(tag)
+		registry := s.loadTagRegistry(registryKey)
+		if registry == nil {
+			registry = make(map[string]struct{})
+		}
+		registry[key] = struct{}{}
+		s.client.Set(registryKey, registry)
+	}
+
+	return nil
+}
+
+// InvalidateTags implements cache.TagRegistry.InvalidateTags.
+// Removes all cache entries associated with the provided tags.
+func (s *sturdycService) InvalidateTags(ctx context.Context, tags []string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	for _, tag := range tags {
+		if tag == "" {
+			continue
+		}
+		registryKey := tagRegistryKey(tag)
+		registry := s.loadTagRegistry(registryKey)
+		for key := range registry {
+			s.client.Delete(key)
+		}
+		s.client.Delete(registryKey)
 	}
 
 	return nil
