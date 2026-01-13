@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/viccon/sturdyc"
@@ -161,6 +162,7 @@ func (e *ConfigError) Error() string {
 // sturdycService wraps a sturdyc client providing caching behaviour.
 type sturdycService struct {
 	client *sturdyc.Client[any]
+	tagMu  sync.Mutex
 }
 
 // NewSturdycService creates a new sturdyc cache service adapter.
@@ -344,6 +346,9 @@ func (s *sturdycService) AddTags(ctx context.Context, key string, tags []string)
 		return nil
 	}
 
+	s.tagMu.Lock()
+	defer s.tagMu.Unlock()
+
 	for _, tag := range tags {
 		if tag == "" {
 			continue
@@ -366,6 +371,9 @@ func (s *sturdycService) InvalidateTags(ctx context.Context, tags []string) erro
 	if len(tags) == 0 {
 		return nil
 	}
+
+	s.tagMu.Lock()
+	defer s.tagMu.Unlock()
 
 	for _, tag := range tags {
 		if tag == "" {
