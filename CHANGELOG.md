@@ -1,5 +1,29 @@
 # Changelog
 
+# [0.6.0](https://github.com/goliatone/go-auth/compare/v0.5.0...v0.6.0) - (2026-01-13)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Data race ([6132d53](https://github.com/goliatone/go-auth/commit/6132d5386fe9d2e619c15de0b932909feeb6bf0f))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.6.0 ([e50633c](https://github.com/goliatone/go-auth/commit/e50633ccc86d7d745d7db2ea7238fe9420571a4e))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Repository cache tag implementation ([a44d581](https://github.com/goliatone/go-auth/commit/a44d581b6380c464370d4e2887f8a58751a48426))  - (goliatone)
+- TagRegistry capability for associated cache keys ([d092c54](https://github.com/goliatone/go-auth/commit/d092c542d01dfd50386aaf993aa2f1db28bf9171))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.5.0 ([0394ae9](https://github.com/goliatone/go-auth/commit/0394ae958df99c10841aff4f6fb709635fa4b902))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update docs ([20dede9](https://github.com/goliatone/go-auth/commit/20dede9bf5bb624d4429665702904a9cce44314d))  - (goliatone)
+- Update tests ([b6a5c03](https://github.com/goliatone/go-auth/commit/b6a5c03328b325b6eb1e9449912950f5e39b364c))  - (goliatone)
+
 # [0.5.0](https://github.com/goliatone/go-auth/compare/v0.4.0...v0.5.0) - (2025-10-24)
 
 ## <!-- 1 -->🐛 Bug Fixes
