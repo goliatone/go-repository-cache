@@ -79,9 +79,14 @@ func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.Se
 		args = append([]any{signature}, args...)
 	}
 	key := c.key("Get", args...)
-	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
+	result, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.Get(ctx, criteria...)
 	})
+	if err == nil {
+		tags := []string{c.scopeTag(signature)}
+		c.registerTags(ctx, key, tags)
+	}
+	return result, err
 }
 
 // GetByID retrieves a record by ID with optional criteria, with caching
@@ -93,9 +98,17 @@ func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria .
 	}
 	args = append(args, toAnySlice(criteria)...)
 	key := c.key("GetByID", args...)
-	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
+	result, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.GetByID(ctx, id, criteria...)
 	})
+	if err == nil {
+		tags := []string{c.scopeTag(signature)}
+		if tag, ok := c.idTag(id); ok {
+			tags = appendTag(tags, tag)
+		}
+		c.registerTags(ctx, key, tags)
+	}
+	return result, err
 }
 
 // List retrieves multiple records using the provided criteria, with caching
@@ -113,6 +126,8 @@ func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.S
 	if err != nil {
 		return nil, 0, err
 	}
+	tags := []string{c.listTag(), c.scopeTag(signature)}
+	c.registerTags(ctx, key, tags)
 	return res.Records, res.Total, nil
 }
 
@@ -124,9 +139,14 @@ func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.
 		args = append([]any{signature}, args...)
 	}
 	key := c.key("Count", args...)
-	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (int, error) {
+	result, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (int, error) {
 		return c.base.Count(ctx, criteria...)
 	})
+	if err == nil {
+		tags := []string{c.listTag(), c.scopeTag(signature)}
+		c.registerTags(ctx, key, tags)
+	}
+	return result, err
 }
 
 // GetByIdentifier retrieves a record by identifier with optional criteria, with caching
@@ -138,9 +158,17 @@ func (c *CachedRepository[T]) GetByIdentifier(ctx context.Context, identifier st
 	}
 	args = append(args, toAnySlice(criteria)...)
 	key := c.key("GetByIdentifier", args...)
-	return cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
+	result, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
 		return c.base.GetByIdentifier(ctx, identifier, criteria...)
 	})
+	if err == nil {
+		tags := []string{c.scopeTag(signature)}
+		if tag, ok := c.identifierTag(identifier); ok {
+			tags = appendTag(tags, tag)
+		}
+		c.registerTags(ctx, key, tags)
+	}
+	return result, err
 }
 
 // Create creates a new record. Write operations pass through to base repository
@@ -466,6 +494,11 @@ func (c *CachedRepository[T]) invalidateRecordCaches(ctx context.Context, record
 
 // invalidateAfterCreate invalidates caches after create operations
 func (c *CachedRepository[T]) invalidateAfterCreate(ctx context.Context, records ...T) error {
+	tags := c.writeInvalidationTags(ctx, records)
+	if c.invalidateTags(ctx, tags) {
+		return nil
+	}
+
 	for _, record := range records {
 		c.invalidateRecordCaches(ctx, record)
 	}
@@ -481,6 +514,11 @@ func (c *CachedRepository[T]) invalidateAfterCreate(ctx context.Context, records
 
 // invalidateAfterUpdate invalidates all relevant caches after update operations
 func (c *CachedRepository[T]) invalidateAfterUpdate(ctx context.Context, record T) error {
+	tags := c.writeInvalidationTags(ctx, []T{record})
+	if c.invalidateTags(ctx, tags) {
+		return nil
+	}
+
 	c.invalidateRecordCaches(ctx, record)
 
 	// Invalidate all query result caches (List/Count/Get with criteria)
@@ -516,6 +554,12 @@ func (c *CachedRepository[T]) invalidateAfterBulkCreate(ctx context.Context, rec
 
 // invalidateAfterCriteriaOperation invalidates caches after operations that use criteria instead of records
 func (c *CachedRepository[T]) invalidateAfterCriteriaOperation(ctx context.Context) error {
+	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
+	tags := []string{c.listTag(), c.scopeTag(signature)}
+	if c.invalidateTags(ctx, tags) {
+		return nil
+	}
+
 	// For operations like DeleteMany where we don't have the actual records,
 	// we must invalidate all relevant caches since we can't target specific keys
 	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("GetByID"))
@@ -723,4 +767,109 @@ func (c *CachedRepository[T]) deleteByPrefix(ctx context.Context, prefix string)
 func (c *CachedRepository[T]) invalidateGetCaches(ctx context.Context) {
 	c.deleteKey(ctx, "Get")
 	c.deleteByPrefix(ctx, c.methodPrefixWithSeparator("Get"))
+}
+
+func (c *CachedRepository[T]) registerTags(ctx context.Context, key string, tags []string) {
+	tagRegistry, ok := c.cache.(cache.TagRegistry)
+	if !ok {
+		return
+	}
+	contextTags := cacheTagsFromContext(ctx)
+	if len(contextTags) > 0 {
+		tags = appendTags(tags, contextTags)
+	}
+	unique := dedupeStrings(tags)
+	if len(unique) == 0 {
+		return
+	}
+	_ = tagRegistry.AddTags(ctx, key, unique)
+}
+
+func (c *CachedRepository[T]) invalidateTags(ctx context.Context, tags []string) bool {
+	tagRegistry, ok := c.cache.(cache.TagRegistry)
+	if !ok {
+		return false
+	}
+	unique := dedupeStrings(tags)
+	if len(unique) == 0 {
+		return false
+	}
+	_ = tagRegistry.InvalidateTags(ctx, unique)
+	return true
+}
+
+func (c *CachedRepository[T]) tagLabel(label string) string {
+	return strings.Join([]string{c.namespace, label}, cache.KeySeparator)
+}
+
+func (c *CachedRepository[T]) tagValue(label string, value any) string {
+	serialized := c.keySerializer.SerializeKey(label, value)
+	return strings.Join([]string{c.namespace, serialized}, cache.KeySeparator)
+}
+
+func (c *CachedRepository[T]) scopeTag(signature repository.ScopeState) string {
+	return c.tagValue("scope", signature)
+}
+
+func (c *CachedRepository[T]) idTag(id string) (string, bool) {
+	if id == "" {
+		return "", false
+	}
+	return c.tagValue("id", id), true
+}
+
+func (c *CachedRepository[T]) identifierTag(identifier string) (string, bool) {
+	if identifier == "" {
+		return "", false
+	}
+	return c.tagValue("identifier", identifier), true
+}
+
+func (c *CachedRepository[T]) listTag() string {
+	return c.tagLabel("list")
+}
+
+func appendTag(tags []string, tag string) []string {
+	if tag == "" {
+		return tags
+	}
+	for _, existing := range tags {
+		if existing == tag {
+			return tags
+		}
+	}
+	return append(tags, tag)
+}
+
+func appendTags(tags []string, extra []string) []string {
+	for _, tag := range extra {
+		tags = appendTag(tags, tag)
+	}
+	return tags
+}
+
+func (c *CachedRepository[T]) recordTags(record T) []string {
+	var tags []string
+	if id, err := c.extractID(record); err == nil && id != "" {
+		if tag, ok := c.idTag(id); ok {
+			tags = appendTag(tags, tag)
+		}
+	}
+	if identifiers, err := c.extractIdentifierValues(record); err == nil {
+		for _, identifier := range identifiers {
+			if tag, ok := c.identifierTag(identifier); ok {
+				tags = appendTag(tags, tag)
+			}
+		}
+	}
+	return tags
+}
+
+func (c *CachedRepository[T]) writeInvalidationTags(ctx context.Context, records []T) []string {
+	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
+	tags := []string{c.listTag(), c.scopeTag(signature)}
+	for _, record := range records {
+		tags = appendTags(tags, c.recordTags(record))
+	}
+	return dedupeStrings(tags)
 }
