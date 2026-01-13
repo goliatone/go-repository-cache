@@ -67,19 +67,13 @@
 //
 // # Cache Invalidation Strategy
 //
-// A comprehensive cache invalidation strategy has been designed and documented
-// in REPOSITORY_CACHE.md. The strategy addresses:
+// The invalidation strategy is documented in REPOSITORY_CACHE.md and implemented
+// in this package. When the cache service implements cache.TagRegistry, read
+// operations register tags and write operations invalidate by tags for scope- and
+// record-aware eviction. If TagRegistry is not available, the decorator falls
+// back to prefix-based invalidation.
 //
-//   - **Key structure analysis**: Understanding cache key patterns for targeted invalidation
-//   - **Operation-specific invalidation**: Different strategies for Create, Update, Delete operations
-//   - **Key registry pattern**: Tracking active cache keys for prefix-based invalidation
-//   - **Reflection-based helpers**: Extracting IDs and identifiers from records for targeted cache clearing
-//   - **Testing fixtures**: Comprehensive scenarios for invalidation behavior validation
-//
-// Implementation is planned across tasks TSK-20 through TSK-22:
-//   - TSK-20: Extend CacheService with prefix-based invalidation methods
-//   - TSK-21: Implement key registry and invalidation logic in the decorator
-//   - TSK-22: Add comprehensive testing and edge case handling
+// Custom read paths can attach extra tags using repositorycache.WithCacheTags.
 //
 // # Integration with Dependency Injection
 //
