@@ -137,31 +137,47 @@ func (s *defaultKeySerializer) serializeArray(rv reflect.Value) string {
 func (s *defaultKeySerializer) serializeMap(rv reflect.Value) string {
 	keys := rv.MapKeys()
 
-	// Sort keys for deterministic output
-	keyStrings := make([]string, len(keys))
-	for i, k := range keys {
-		keyStrings[i] = s.serializeValue(k.Interface())
-	}
-	sort.Strings(keyStrings)
-
-	// Build key-value pairs in sorted order
-	pairs := make([]string, len(keyStrings))
-	for i, keyStr := range keyStrings {
-		// Find the original key that matches this string representation
-		var originalKey reflect.Value
-		for _, k := range keys {
-			if s.serializeValue(k.Interface()) == keyStr {
-				originalKey = k
-				break
-			}
-		}
-
-		value := rv.MapIndex(originalKey)
-		valueStr := s.serializeValue(value.Interface())
-		pairs[i] = fmt.Sprintf("%s=%s", keyStr, valueStr)
+	type entry struct {
+		keySort  string
+		keyValue string
+		value    string
 	}
 
-	return fmt.Sprintf("map[%d]:{%s}", len(pairs), strings.Join(pairs, ","))
+	entries := make([]entry, 0, len(keys))
+	for _, key := range keys {
+		keyToken := s.serializeMapKey(key)
+		value := rv.MapIndex(key)
+		entries = append(entries, entry{
+			keySort:  keyToken,
+			keyValue: keyToken,
+			value:    s.serializeValue(value.Interface()),
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].keySort < entries[j].keySort
+	})
+
+	pairs := make([]string, len(entries))
+	for i, entry := range entries {
+		pairs[i] = fmt.Sprintf("%s=%s", entry.keyValue, entry.value)
+	}
+
+	return fmt.Sprintf("map[%d]:{%s}", len(entries), strings.Join(pairs, ","))
+}
+
+func (s *defaultKeySerializer) serializeMapKey(key reflect.Value) string {
+	keyValue := key
+	if keyValue.Kind() == reflect.Interface && !keyValue.IsNil() {
+		keyValue = keyValue.Elem()
+	}
+
+	keyType := keyValue.Type()
+	typeToken := keyType.String()
+	if pkgPath := keyType.PkgPath(); pkgPath != "" {
+		typeToken = pkgPath + ":" + typeToken
+	}
+	return fmt.Sprintf("%s:%s", typeToken, s.serializeValue(keyValue.Interface()))
 }
 
 // serializeStruct handles struct serialization with field names
