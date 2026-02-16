@@ -1,5 +1,25 @@
 # Changelog
 
+# [0.7.1](https://github.com/goliatone/go-auth/compare/v0.7.0...v0.7.1) - (2026-02-16)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Tag invalidation errors sinelty ignored ([f036d84](https://github.com/goliatone/go-auth/commit/f036d845e15afa5e3370e906753150843ab17f87))  - (goliatone)
+- Reflectoin panic risk in fetch fn error handler ([2ea9ce8](https://github.com/goliatone/go-auth/commit/2ea9ce8c2311db0dabfbc97d7e23c6afff9e6fa6))  - (goliatone)
+- Cache key serializer prevent map key collisions and non determinism ([db3afe2](https://github.com/goliatone/go-auth/commit/db3afe2fb8f91a99f37f2929d62ee62ff9cf4e46))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.7.1 ([7a0e747](https://github.com/goliatone/go-auth/commit/7a0e7473bee3ba923587ffd495cf0168a7398093))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.7.0 ([488a4dd](https://github.com/goliatone/go-auth/commit/488a4ddab81f6b7870b623981a3946ac277fe8b8))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update test ([178b458](https://github.com/goliatone/go-auth/commit/178b45841239d20cda2e0e50831b2ddc03a18f1c))  - (goliatone)
+
 # [0.7.0](https://github.com/goliatone/go-auth/compare/v0.6.0...v0.7.0) - (2026-02-16)
 
 ## <!-- 13 -->📦 Bumps
