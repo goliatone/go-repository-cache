@@ -19,6 +19,10 @@ type tagRegistry interface {
 	InvalidateTags(ctx context.Context, tags []string) error
 }
 
+type concreteFetchErr struct{}
+
+func (concreteFetchErr) Error() string { return "concrete error" }
+
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
@@ -421,6 +425,28 @@ func TestSturdycService_GetOrFetch(t *testing.T) {
 		result, err := service.GetOrFetch(ctx, "wrong-sig2-key", wrongSigFetchFn)
 		if err == nil {
 			t.Error("expected error for function with wrong signature but got none")
+		}
+
+		if result != nil {
+			t.Errorf("expected nil result but got: %v", result)
+		}
+
+		configErr, ok := err.(*ConfigError)
+		if !ok {
+			t.Errorf("expected ConfigError but got: %T", err)
+		} else if configErr.Field != "fetchFn" {
+			t.Errorf("expected error field 'fetchFn', got '%s'", configErr.Field)
+		}
+	})
+
+	t.Run("function with concrete error type return", func(t *testing.T) {
+		wrongSigFetchFn := func(ctx context.Context) (any, concreteFetchErr) {
+			return "wrong", concreteFetchErr{}
+		}
+
+		result, err := service.GetOrFetch(ctx, "wrong-sig3-key", wrongSigFetchFn)
+		if err == nil {
+			t.Error("expected error for function with concrete error return type but got none")
 		}
 
 		if result != nil {

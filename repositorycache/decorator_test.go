@@ -217,6 +217,8 @@ type mockCacheService struct {
 	hits    map[string]bool
 	errors  map[string]error
 	tags    map[string]map[string]struct{}
+
+	invalidateTagsErr error
 }
 
 func newMockCacheService() *mockCacheService {
@@ -338,6 +340,12 @@ func (m *mockCacheService) SetCacheError(key string, err error) {
 	m.errors[key] = err
 }
 
+func (m *mockCacheService) SetInvalidateTagsError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.invalidateTagsErr = err
+}
+
 func (m *mockCacheService) recordCall(method string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -446,6 +454,10 @@ func (m *mockCacheService) InvalidateTags(ctx context.Context, tags []string) er
 	m.recordCall(fmt.Sprintf("InvalidateTags:%v", tags))
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.invalidateTagsErr != nil {
+		return m.invalidateTagsErr
+	}
 
 	for _, tag := range tags {
 		entries := m.tags[tag]
@@ -2080,6 +2092,56 @@ func TestCachedRepository_FallbackInvalidation_NoTagRegistry(t *testing.T) {
 	}
 
 	for _, expected := range expectedPrefixes {
+		found := false
+		for _, call := range calls {
+			if strings.Contains(call, expected) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected fallback invalidation call containing %s, got calls: %v", expected, calls)
+		}
+	}
+}
+
+func TestCachedRepository_FallbackInvalidation_OnTagInvalidationError(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	keySerializer := cache.NewDefaultKeySerializer()
+
+	originalUser := TestUser{ID: "user-1", Name: "Original User"}
+	updatedUser := TestUser{ID: "user-1", Name: "Updated User"}
+
+	baseRepo.getByIDResult = originalUser
+	baseRepo.updateResult = updatedUser
+
+	cached := New(baseRepo, cacheService, keySerializer)
+
+	_, err := cached.GetByID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("GetByID failed: %v", err)
+	}
+	_, _, err = cached.List(context.Background())
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	cacheService.SetInvalidateTagsError(errors.New("tag invalidation failed"))
+
+	_, err = cached.Update(context.Background(), updatedUser)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	calls := cacheService.getCalls()
+	expectedFallbackCalls := []string{
+		"DeleteByPrefix:" + cached.methodPrefix("GetByID", "user-1"),
+		"DeleteByPrefix:" + cached.methodPrefixWithSeparator("List"),
+		"DeleteByPrefix:" + cached.methodPrefixWithSeparator("Count"),
+	}
+
+	for _, expected := range expectedFallbackCalls {
 		found := false
 		for _, call := range calls {
 			if strings.Contains(call, expected) {

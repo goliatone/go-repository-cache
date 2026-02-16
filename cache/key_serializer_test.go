@@ -218,7 +218,7 @@ func TestDefaultKeySerializer_Maps(t *testing.T) {
 			name:   "string to int map",
 			method: "GetByFilters",
 			args:   []any{map[string]int{"age": 25, "count": 10}},
-			want:   joinWithSeparator("GetByFilters", "map[2]:{age=25,count=10}"),
+			want:   joinWithSeparator("GetByFilters", "map[2]:{string:age=25,string:count=10}"),
 		},
 	}
 
@@ -229,6 +229,28 @@ func TestDefaultKeySerializer_Maps(t *testing.T) {
 				t.Errorf("SerializeKey() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDefaultKeySerializer_MapsDistinctTypedKeys(t *testing.T) {
+	serializer := NewDefaultKeySerializer()
+
+	args := map[any]string{
+		int(1):   "int",
+		int64(1): "int64",
+	}
+
+	key := serializer.SerializeKey("GetByAnyMap", args)
+	expected := joinWithSeparator("GetByAnyMap", "map[2]:{int64:1=int64,int:1=int}")
+
+	if key != expected {
+		t.Fatalf("SerializeKey() = %v, want %v", key, expected)
+	}
+
+	for i := 0; i < 20; i++ {
+		if got := serializer.SerializeKey("GetByAnyMap", args); got != expected {
+			t.Fatalf("SerializeKey() became unstable on iteration %d: got %v, want %v", i, got, expected)
+		}
 	}
 }
 
