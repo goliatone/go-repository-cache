@@ -225,8 +225,8 @@ func validateFetchFn(fetchFn any) error {
 
 	// Check second output parameter is error
 	errorType := reflect.TypeOf((*error)(nil)).Elem()
-	if !fnType.Out(1).Implements(errorType) {
-		return &ConfigError{Field: "fetchFn", Message: "second return value must be error"}
+	if fnType.Out(1) != errorType {
+		return &ConfigError{Field: "fetchFn", Message: "second return value must be error interface"}
 	}
 
 	return nil
@@ -277,7 +277,7 @@ func callFetchFunctionWithReflection(ctx context.Context, fetchFn any) (any, err
 
 	// Get the second return value (error)
 	errorValue := results[1]
-	if errorValue.IsValid() && !errorValue.IsNil() {
+	if errorValue.IsValid() && errorValue.Kind() == reflect.Interface && !errorValue.IsNil() {
 		err = errorValue.Interface().(error)
 	}
 
