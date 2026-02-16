@@ -794,7 +794,9 @@ func (c *CachedRepository[T]) invalidateTags(ctx context.Context, tags []string)
 	if len(unique) == 0 {
 		return false
 	}
-	_ = tagRegistry.InvalidateTags(ctx, unique)
+	if err := tagRegistry.InvalidateTags(ctx, unique); err != nil {
+		return false
+	}
 	return true
 }
 
