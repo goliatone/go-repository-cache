@@ -5,7 +5,7 @@ go 1.23.4
 replace github.com/goliatone/go-repository-cache => ../..
 
 require (
-	github.com/goliatone/go-repository-bun v0.5.2
+	github.com/goliatone/go-repository-bun v0.16.1
 	github.com/goliatone/go-repository-cache v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/uptrace/bun v1.2.15
@@ -14,7 +14,7 @@ require (
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0 // indirect
-	github.com/goliatone/go-errors v0.9.0 // indirect
+	github.com/goliatone/go-errors v0.10.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/mattn/go-sqlite3 v1.14.28 // indirect
