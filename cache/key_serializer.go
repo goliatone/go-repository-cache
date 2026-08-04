@@ -12,8 +12,8 @@ import (
 const KeySeparator = "::"
 
 // defaultKeySerializer implements KeySerializer using reflection-based serialization.
-// It handles function pointers using %p formatting, recursive slices, and falls back to JSON
-// for complex types while ensuring deterministic key generation across runs.
+// Function values are deliberately represented as opaque because their code pointer
+// does not include closure captures and is not a semantic query identity.
 type defaultKeySerializer struct{}
 
 // NewDefaultKeySerializer creates a new instance of the default key serializer.
@@ -48,9 +48,10 @@ func (s *defaultKeySerializer) serializeValue(v any) string {
 	rv := reflect.ValueOf(v)
 	rt := reflect.TypeOf(v)
 
-	// Handle function pointers using %p formatting for stability
+	// Function values are opaque. Callers must not use this marker as a semantic
+	// cache identity; repository decorators bypass function-valued criteria.
 	if rt.Kind() == reflect.Func {
-		return fmt.Sprintf("func:%p", v)
+		return "func:opaque:" + rt.String()
 	}
 
 	// Handle pointers by dereferencing

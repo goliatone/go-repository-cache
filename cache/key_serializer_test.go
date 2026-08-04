@@ -302,18 +302,29 @@ func TestDefaultKeySerializer_Functions(t *testing.T) {
 	serializer := NewDefaultKeySerializer()
 
 	testFunc := func() {}
+	makeClosure := func(value string) func() string {
+		return func() string { return value }
+	}
 
-	// Test that function pointers produce deterministic keys with %p formatting
 	key1 := serializer.SerializeKey("GetWithFunc", testFunc)
 	key2 := serializer.SerializeKey("GetWithFunc", testFunc)
 
 	if key1 != key2 {
-		t.Errorf("Function serialization should be stable: %v != %v", key1, key2)
+		t.Fatalf("opaque function serialization should be stable: %v != %v", key1, key2)
 	}
 
-	funcPrefix := joinWithSeparator("GetWithFunc", "func") + ":"
-	if !strings.HasPrefix(key1, funcPrefix) {
-		t.Errorf("Function serialization should use func: prefix with pointer format, got: %v", key1)
+	want := joinWithSeparator("GetWithFunc", "func:opaque:func()")
+	if key1 != want {
+		t.Fatalf("SerializeKey() = %v, want %v", key1, want)
+	}
+
+	closure1 := serializer.SerializeKey("GetWithClosure", makeClosure("child"))
+	closure2 := serializer.SerializeKey("GetWithClosure", makeClosure("parent"))
+	if closure1 != closure2 {
+		t.Fatalf("function captures must not be represented as semantic key data: %v != %v", closure1, closure2)
+	}
+	if strings.Contains(closure1, "child") || strings.Contains(closure1, "parent") {
+		t.Fatalf("opaque function marker leaked captured values: %v", closure1)
 	}
 }
 

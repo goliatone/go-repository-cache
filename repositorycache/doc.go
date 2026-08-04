@@ -54,8 +54,9 @@
 //  4. Store result in cache
 //  5. Return result to caller
 //
-// Key serialization includes the method name and all parameters to ensure cache
-// correctness across different query patterns.
+// Key serialization includes the method name and deterministic value parameters.
+// Reads with function-valued SelectCriteria bypass the cache because closure code
+// pointers do not include captured query values.
 //
 // # Transaction Handling
 //
@@ -98,7 +99,7 @@
 //   - Cache hits avoid database roundtrips for read operations
 //   - Key serialization has minimal overhead using reflection
 //   - List operations cache both records and total count as a unit
-//   - Function criteria in keys use pointer addresses (stable per process)
+//   - Function-valued criteria pass through to preserve query correctness
 //
 // # Error Handling
 //

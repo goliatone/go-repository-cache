@@ -49,17 +49,6 @@ func (c *CachedRepository[T]) scopeSignature(ctx context.Context, op repository.
 	return repository.ResolveScopeState(ctx, defaults, op)
 }
 
-func toAnySlice[T any](items []T) []any {
-	if len(items) == 0 {
-		return nil
-	}
-	args := make([]any, len(items))
-	for i, item := range items {
-		args[i] = item
-	}
-	return args
-}
-
 // New creates a new CachedRepository that wraps the base repository with caching
 func New[T any](base repository.Repository[T], cacheService cache.CacheService, keySerializer cache.KeySerializer) *CachedRepository[T] {
 	return newCachedRepository(base, cacheService, keySerializer, nil)
@@ -71,16 +60,19 @@ func NewWithIdentifierFields[T any](base repository.Repository[T], cacheService 
 	return newCachedRepository(base, cacheService, keySerializer, identifierFields)
 }
 
-// Get retrieves a single record using the provided criteria, with caching
+// Get caches value-only reads and passes criteria-bearing reads through to the base repository.
 func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.SelectCriteria) (T, error) {
+	if len(criteria) > 0 {
+		return c.base.Get(ctx, criteria...)
+	}
 	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
-	args := toAnySlice(criteria)
+	var args []any
 	if !signature.IsZero() {
-		args = append([]any{signature}, args...)
+		args = append(args, signature)
 	}
 	key := c.key("Get", args...)
 	result, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
-		return c.base.Get(ctx, criteria...)
+		return c.base.Get(ctx)
 	})
 	if err == nil {
 		tags := []string{c.scopeTag(signature)}
@@ -89,17 +81,19 @@ func (c *CachedRepository[T]) Get(ctx context.Context, criteria ...repository.Se
 	return result, err
 }
 
-// GetByID retrieves a record by ID with optional criteria, with caching
+// GetByID caches value-only reads and passes criteria-bearing reads through to the base repository.
 func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria ...repository.SelectCriteria) (T, error) {
+	if len(criteria) > 0 {
+		return c.base.GetByID(ctx, id, criteria...)
+	}
 	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
 	args := []any{id}
 	if !signature.IsZero() {
 		args = append(args, signature)
 	}
-	args = append(args, toAnySlice(criteria)...)
 	key := c.key("GetByID", args...)
 	result, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
-		return c.base.GetByID(ctx, id, criteria...)
+		return c.base.GetByID(ctx, id)
 	})
 	if err == nil {
 		tags := []string{c.scopeTag(signature)}
@@ -111,16 +105,19 @@ func (c *CachedRepository[T]) GetByID(ctx context.Context, id string, criteria .
 	return result, err
 }
 
-// List retrieves multiple records using the provided criteria, with caching
+// List caches value-only reads and passes criteria-bearing reads through to the base repository.
 func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.SelectCriteria) ([]T, int, error) {
+	if len(criteria) > 0 {
+		return c.base.List(ctx, criteria...)
+	}
 	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
-	args := toAnySlice(criteria)
+	var args []any
 	if !signature.IsZero() {
-		args = append([]any{signature}, args...)
+		args = append(args, signature)
 	}
 	key := c.key("List", args...)
 	res, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (listResult[T], error) {
-		records, total, err := c.base.List(ctx, criteria...)
+		records, total, err := c.base.List(ctx)
 		return listResult[T]{Records: records, Total: total}, err
 	})
 	if err != nil {
@@ -131,16 +128,19 @@ func (c *CachedRepository[T]) List(ctx context.Context, criteria ...repository.S
 	return res.Records, res.Total, nil
 }
 
-// Count returns the number of records matching the criteria, with caching
+// Count caches value-only reads and passes criteria-bearing reads through to the base repository.
 func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.SelectCriteria) (int, error) {
+	if len(criteria) > 0 {
+		return c.base.Count(ctx, criteria...)
+	}
 	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
-	args := toAnySlice(criteria)
+	var args []any
 	if !signature.IsZero() {
-		args = append([]any{signature}, args...)
+		args = append(args, signature)
 	}
 	key := c.key("Count", args...)
 	result, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (int, error) {
-		return c.base.Count(ctx, criteria...)
+		return c.base.Count(ctx)
 	})
 	if err == nil {
 		tags := []string{c.listTag(), c.scopeTag(signature)}
@@ -149,17 +149,19 @@ func (c *CachedRepository[T]) Count(ctx context.Context, criteria ...repository.
 	return result, err
 }
 
-// GetByIdentifier retrieves a record by identifier with optional criteria, with caching
+// GetByIdentifier caches value-only reads and passes criteria-bearing reads through to the base repository.
 func (c *CachedRepository[T]) GetByIdentifier(ctx context.Context, identifier string, criteria ...repository.SelectCriteria) (T, error) {
+	if len(criteria) > 0 {
+		return c.base.GetByIdentifier(ctx, identifier, criteria...)
+	}
 	signature := c.scopeSignature(ctx, repository.ScopeOperationSelect)
 	args := []any{identifier}
 	if !signature.IsZero() {
 		args = append(args, signature)
 	}
-	args = append(args, toAnySlice(criteria)...)
 	key := c.key("GetByIdentifier", args...)
 	result, err := cache.GetOrFetch(ctx, c.cache, key, func(ctx context.Context) (T, error) {
-		return c.base.GetByIdentifier(ctx, identifier, criteria...)
+		return c.base.GetByIdentifier(ctx, identifier)
 	})
 	if err == nil {
 		tags := []string{c.scopeTag(signature)}

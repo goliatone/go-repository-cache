@@ -132,16 +132,20 @@ func (m *mockRepository[T]) RawTx(ctx context.Context, tx bun.IDB, sql string, a
 	panic("RawTx not implemented in mock")
 }
 func (m *mockRepository[T]) GetTx(ctx context.Context, tx bun.IDB, criteria ...repository.SelectCriteria) (T, error) {
-	panic("GetTx not implemented in mock")
+	m.recordCall("GetTx")
+	return m.getResult, m.getError
 }
 func (m *mockRepository[T]) GetByIDTx(ctx context.Context, tx bun.IDB, id string, criteria ...repository.SelectCriteria) (T, error) {
-	panic("GetByIDTx not implemented in mock")
+	m.recordCall("GetByIDTx")
+	return m.getByIDResult, m.getByIDError
 }
 func (m *mockRepository[T]) ListTx(ctx context.Context, tx bun.IDB, criteria ...repository.SelectCriteria) ([]T, int, error) {
-	panic("ListTx not implemented in mock")
+	m.recordCall("ListTx")
+	return m.listRecords, m.listTotal, m.listError
 }
 func (m *mockRepository[T]) CountTx(ctx context.Context, tx bun.IDB, criteria ...repository.SelectCriteria) (int, error) {
-	panic("CountTx not implemented in mock")
+	m.recordCall("CountTx")
+	return m.countResult, m.countError
 }
 func (m *mockRepository[T]) CreateTx(ctx context.Context, tx bun.IDB, record T, criteria ...repository.InsertCriteria) (T, error) {
 	panic("CreateTx not implemented in mock")
@@ -160,7 +164,8 @@ func (m *mockRepository[T]) GetOrCreateTx(ctx context.Context, tx bun.IDB, recor
 	panic("GetOrCreateTx not implemented in mock")
 }
 func (m *mockRepository[T]) GetByIdentifierTx(ctx context.Context, tx bun.IDB, identifier string, criteria ...repository.SelectCriteria) (T, error) {
-	panic("GetByIdentifierTx not implemented in mock")
+	m.recordCall("GetByIdentifierTx")
+	return m.getByIDResult2, m.getByIDError2
 }
 func (m *mockRepository[T]) UpdateTx(ctx context.Context, tx bun.IDB, record T, criteria ...repository.UpdateCriteria) (T, error) {
 	panic("UpdateTx not implemented in mock")
@@ -803,6 +808,161 @@ func TestCachedReadMethods_CacheMiss(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCriteriaReadsBypassCache(t *testing.T) {
+	criteria := repository.SelectRawProcessor(func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q
+	})
+
+	tests := []struct {
+		name      string
+		operation func(*CachedRepository[TestUser]) error
+		wantCall  string
+	}{
+		{
+			name: "Get",
+			operation: func(cached *CachedRepository[TestUser]) error {
+				_, err := cached.Get(context.Background(), criteria)
+				return err
+			},
+			wantCall: "Get",
+		},
+		{
+			name: "GetByID",
+			operation: func(cached *CachedRepository[TestUser]) error {
+				_, err := cached.GetByID(context.Background(), "user-1", criteria)
+				return err
+			},
+			wantCall: "GetByID",
+		},
+		{
+			name: "List",
+			operation: func(cached *CachedRepository[TestUser]) error {
+				_, _, err := cached.List(context.Background(), criteria)
+				return err
+			},
+			wantCall: "List",
+		},
+		{
+			name: "Count",
+			operation: func(cached *CachedRepository[TestUser]) error {
+				_, err := cached.Count(context.Background(), criteria)
+				return err
+			},
+			wantCall: "Count",
+		},
+		{
+			name: "GetByIdentifier",
+			operation: func(cached *CachedRepository[TestUser]) error {
+				_, err := cached.GetByIdentifier(context.Background(), "user@example.com", criteria)
+				return err
+			},
+			wantCall: "GetByIdentifier",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseRepo := &mockRepository[TestUser]{}
+			cacheService := newMockCacheService()
+			keySerializer := newTrackingKeySerializer()
+			cached := New(baseRepo, cacheService, keySerializer)
+
+			if err := tt.operation(cached); err != nil {
+				t.Fatalf("first criteria read failed: %v", err)
+			}
+			if err := tt.operation(cached); err != nil {
+				t.Fatalf("second criteria read failed: %v", err)
+			}
+
+			if got := baseRepo.getCalls(); !reflect.DeepEqual(got, []string{tt.wantCall, tt.wantCall}) {
+				t.Fatalf("base calls = %v, want two %s calls", got, tt.wantCall)
+			}
+			for _, call := range cacheService.getCalls() {
+				if strings.HasPrefix(call, "GetOrFetch:") {
+					t.Fatalf("criteria read called cache service: %s", call)
+				}
+			}
+			if got := keySerializer.getCalls(); len(got) != 0 {
+				t.Fatalf("criteria read serialized a cache key: %v", got)
+			}
+		})
+	}
+}
+
+func TestListClosuresFromSameSiteWithDifferentCapturesCannotShareResult(t *testing.T) {
+	criteriaAtSameSite := func(code string) repository.SelectCriteria {
+		return repository.SelectRawProcessor(func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Where("external_code = ?", code)
+		})
+	}
+
+	baseRepo := &mockRepository[TestUser]{
+		listRecords: []TestUser{{ID: "child", Name: "Child"}},
+		listTotal:   1,
+	}
+	cacheService := newMockCacheService()
+	cached := New(baseRepo, cacheService, cache.NewDefaultKeySerializer())
+
+	child, _, err := cached.List(context.Background(), criteriaAtSameSite("child"))
+	if err != nil {
+		t.Fatalf("child lookup failed: %v", err)
+	}
+	if len(child) != 1 || child[0].ID != "child" {
+		t.Fatalf("child lookup = %#v", child)
+	}
+
+	baseRepo.listRecords = []TestUser{{ID: "parent", Name: "Parent"}}
+	parent, _, err := cached.List(context.Background(), criteriaAtSameSite("parent"))
+	if err != nil {
+		t.Fatalf("parent lookup failed: %v", err)
+	}
+	if len(parent) != 1 || parent[0].ID != "parent" {
+		t.Fatalf("parent lookup reused child result: %#v", parent)
+	}
+
+	if got := baseRepo.getCalls(); !reflect.DeepEqual(got, []string{"List", "List"}) {
+		t.Fatalf("base calls = %v, want two List calls", got)
+	}
+	for _, call := range cacheService.getCalls() {
+		if strings.HasPrefix(call, "GetOrFetch:") {
+			t.Fatalf("opaque closure lookup called cache service: %s", call)
+		}
+	}
+}
+
+func TestTransactionReadsRemainPassThrough(t *testing.T) {
+	baseRepo := &mockRepository[TestUser]{}
+	cacheService := newMockCacheService()
+	cached := New(baseRepo, cacheService, cache.NewDefaultKeySerializer())
+	criteria := repository.SelectRawProcessor(func(q *bun.SelectQuery) *bun.SelectQuery { return q })
+
+	if _, err := cached.GetTx(context.Background(), nil, criteria); err != nil {
+		t.Fatalf("GetTx failed: %v", err)
+	}
+	if _, err := cached.GetByIDTx(context.Background(), nil, "user-1", criteria); err != nil {
+		t.Fatalf("GetByIDTx failed: %v", err)
+	}
+	if _, _, err := cached.ListTx(context.Background(), nil, criteria); err != nil {
+		t.Fatalf("ListTx failed: %v", err)
+	}
+	if _, err := cached.CountTx(context.Background(), nil, criteria); err != nil {
+		t.Fatalf("CountTx failed: %v", err)
+	}
+	if _, err := cached.GetByIdentifierTx(context.Background(), nil, "user@example.com", criteria); err != nil {
+		t.Fatalf("GetByIdentifierTx failed: %v", err)
+	}
+
+	want := []string{"GetTx", "GetByIDTx", "ListTx", "CountTx", "GetByIdentifierTx"}
+	if got := baseRepo.getCalls(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("base calls = %v, want %v", got, want)
+	}
+	for _, call := range cacheService.getCalls() {
+		if strings.HasPrefix(call, "GetOrFetch:") {
+			t.Fatalf("transaction read called cache service: %s", call)
+		}
 	}
 }
 

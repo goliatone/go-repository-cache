@@ -15,20 +15,20 @@
 // The simplest way to use the cache package is with the default key serializer:
 //
 //	serializer := cache.NewDefaultKeySerializer()
-//	key := serializer.SerializeKey("GetByID", "user-123", someCriteriaFunc)
+//	key := serializer.SerializeKey("GetByID", "user-123")
 //
 // For repository caching, you would typically use this with a CacheService implementation:
 //
 //	// Assume you have a cache service implementation
 //	result, err := cache.GetOrFetch(ctx, cacheService, key, func(ctx context.Context) (User, error) {
-//		return repository.GetByID(ctx, "user-123", someCriteriaFunc)
+//		return repository.GetByID(ctx, "user-123")
 //	})
 //
 // # Key Serialization Strategy
 //
 // The default key serializer uses reflection to handle various Go types:
 //
-//   - Function pointers: Uses %p formatting for stability within a process
+//   - Function values: Emits an explicit opaque marker that must not be used as a semantic key
 //   - Basic types: Direct string representation
 //   - Slices/arrays: Recursive serialization of elements
 //   - Maps: Sorted key-value pairs for deterministic output
@@ -37,12 +37,10 @@
 //
 // # Important Warnings for Function Criteria
 //
-// When using function criteria (common in repository patterns), be aware of these limitations:
-//
-//   - Function pointers are stable only within a single process lifetime
-//   - Closures with different captured variables will have different pointers
-//   - Anonymous functions created at different call sites will have different pointers
-//   - For distributed caching, consider a custom KeySerializer that includes stable criteria names
+// Function values do not expose their captured data, and their underlying code
+// pointer is not sufficient to identify a closure. The default serializer therefore
+// emits an opaque marker. Cached repository decorators never build cache keys from
+// function-valued SelectCriteria; those reads pass through to the base repository.
 //
 // # Custom Key Serializers
 //
@@ -59,8 +57,8 @@
 //
 // This is useful when you need:
 //   - Different key formats for different cache backends
-//   - Stable keys across process restarts for function criteria
-//   - Application-specific key structures or namespacing
+//   - Application-specific semantic key structures for non-repository use cases
+//   - Application-specific namespacing
 //
 // # Error Handling
 //
