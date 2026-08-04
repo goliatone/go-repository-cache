@@ -10,7 +10,7 @@ A **type-safe caching decorator** for [go-repository-bun](https://github.com/gol
 - **Tag based invalidation**: Registers read keys under tags and invalidates on writes
 - **Selective caching**: Only read operations are cached; writes pass through
 - **Transaction awareness**: Bypasses cache for transactional operations
-- **Smart key generation**: Handles complex criteria and sanitizes namespaces for Redis/Memcache safety
+- **Safe key generation**: Caches deterministic value inputs and bypasses opaque function-valued criteria
 - **Configurable**: Pluggable key serialization and cache configuration
 
 ## Quick Start
@@ -115,11 +115,12 @@ func main() {
 
 ### Caching Strategy
 
-**Cached Operations** (performance benefit):
+**Cached Operations** (when called without `SelectCriteria`):
 - `Get`, `GetByID`, `GetByIdentifier`
 - `List`, `Count`
 
 **Pass-through Operations** (consistency guarantee):
+- Reads with one or more function-valued `SelectCriteria`
 - All write operations (`Create`, `Update`, `Delete`, etc.)
 - All transaction methods (`*Tx` variants)
 - Raw SQL queries
@@ -128,16 +129,24 @@ func main() {
 
 The library automatically generates stable cache keys from:
 - Method name (`GetByID`, `List`, etc.)
-- All parameters including complex criteria
-- Function pointers (stable within process lifetime)
+- Deterministic value parameters such as IDs, identifiers, and active scope state
 
 ```go
-//these generate different cache keys:
+// These value-only reads are cached.
 repo.GetByID(ctx, "123")
-repo.GetByID(ctx, "123", repository.WithDeleted())
-repo.List(ctx, repository.Where("active", true))
-repo.List(ctx, repository.Where("active", false))
+
+// SelectCriteria are functions whose captured values cannot be recovered safely.
+// Criteria-bearing reads therefore execute against the base repository.
+repo.GetByID(ctx, "123", repository.SelectDeletedAlso())
+repo.List(ctx, repository.SelectRawProcessor(func(q *bun.SelectQuery) *bun.SelectQuery {
+	return q.Where("active = ?", true)
+}))
 ```
+
+This fail-safe rule prevents closures created at the same call site with different
+captured values from sharing a cached result. If filtered-read caching is required,
+the caller must first define an explicit semantic signature and matching invalidation
+contract; function code pointers are never accepted as query identities.
 
 ### Scope Aware Keys
 
@@ -148,6 +157,11 @@ ctx := repository.WithSelectScopes(ctx, "tenant")
 ctx = repository.WithScopeData(ctx, "tenant", tenantID)
 
 // Key includes both the "tenant" scope name and the concrete tenantID value
+// Scope-only state is included in cached value-only reads.
+user, err := cachedRepo.GetByID(ctx, "user-123")
+
+// Adding SelectCriteria makes the read pass through until a semantic filtered-read
+// cache contract is provided.
 users, total, err := cachedRepo.List(ctx, repository.SelectPaginate(25, 0))
 ```
 
