@@ -1,13 +1,22 @@
 # Changelog
 
-## Unreleased
+# [0.7.2](https://github.com/goliatone/go-auth/compare/v0.7.1...v0.7.2) - (2026-08-04)
 
-- Prevent function-valued `SelectCriteria` closures from participating in repository
-  cache keys. All five cached non-transaction read methods now pass criteria-bearing
-  queries through to the base repository, while deterministic value-only reads remain
-  cached and transaction reads remain unchanged.
-- Replace function-pointer key serialization with an explicit opaque marker and
-  document that closure captures are not semantic cache-key data.
+## <!-- 1 -->🐛 Bug Fixes
+
+- Key serialization ([7deb213](https://github.com/goliatone/go-auth/commit/7deb213e91e1b3e6e547d85be8b385c6e03e14ef))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.7.2 ([7d39254](https://github.com/goliatone/go-auth/commit/7d392546ab61b6ed0fd60a1886c317e86103cecd))  - (goliatone)
+
+## <!-- 3 -->📚 Documentation
+
+- Update changelog for v0.7.1 ([1337fe7](https://github.com/goliatone/go-auth/commit/1337fe77eeeb87316321a23e126cb4f69d3d66fa))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update deps ([8a0ada0](https://github.com/goliatone/go-auth/commit/8a0ada03792f2c880f7974d55cf26779272fac83))  - (goliatone)
 
 # [0.7.1](https://github.com/goliatone/go-auth/compare/v0.7.0...v0.7.1) - (2026-02-16)
 
@@ -181,4 +190,5 @@
 - Update readme ([8b387dd](https://github.com/goliatone/go-auth/commit/8b387dddb75ffc7f4d2dceaae0aea5467d83a881))  - (goliatone)
 - Update deps ([563417e](https://github.com/goliatone/go-auth/commit/563417e5702b77977237d0e6ca7d93f8f20815a9))  - (goliatone)
 - Update tests ([78e383c](https://github.com/goliatone/go-auth/commit/78e383c0d3948a8938cb0716ac784204a74bbaed))  - (goliatone)
+
 
