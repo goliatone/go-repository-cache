@@ -178,6 +178,13 @@ if err := cachedRepo.SetScopeDefaults(repository.ScopeDefaults{
 
 This keeps cache keys aligned with whatever filters the base repository enforces while respecting `WithoutDefaultScopes`, `WithSelectScopes`, and other helpers.
 
+With a registered `ScopeByFieldRequired("group", "group_id")` select default,
+missing, wrong, and unregistered scope contexts cannot reuse another Group's
+warmed entries. This applies to `Get`, `GetByID`, `GetByIdentifier`, `List`, and
+`Count`, including defaults configured before wrapping the base repository.
+Configure scopes at startup and treat `WithoutDefaultScopes` as a trusted escape;
+caching does not add authorization or insertion ownership stamping.
+
 ### Transaction Handling
 
 Operations within transactions bypass the cache to ensure consistency:
@@ -280,6 +287,29 @@ Run the example:
 ```bash
 go run cmd/app/main.go
 ```
+
+### Required Scope Regression Tests
+
+`repositorycache/required_scope_test.go` exercises the real Bun repository on
+disposable SQLite with the production cache adapter and default key serializer.
+It warms Group A reads, proves repeated reads avoid SQL, then verifies missing,
+wrong and unregistered scope denial plus independent Group B results. Different
+Group sizes also detect leaked `List` totals and `Count` values. Both constructor
+scope defaults and defaults set through the decorator are covered.
+
+`TestCachedRepository_RequiredScopeCriteriaBypassWarmCache` checks that repeated
+criteria reads reach SQL despite warm entries, restrictive predicates match no
+rows, and ordinary OR predicates cannot widen the required Group boundary.
+Criteria reads preserve the original value-only cache entry.
+
+```sh
+go test ./...
+go test -race -count=1 -run '^TestCachedRepository_RequiredScope' ./repositorycache
+```
+
+These tests verify SQLite and in-process cache behavior; they do not establish
+PostgreSQL behavior or cache coherence after out-of-band policy/configuration
+changes.
 
 ### Testing Your Cached Repository
 
